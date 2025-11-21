@@ -1,329 +1,355 @@
-// file: App.js
 import React, { useState, useEffect } from 'react';
-import { Users, LogOut, UserCheck, Clock, MapPin, Activity, Calendar, TrendingUp, Award, RefreshCw, AlertCircle } from 'lucide-react';
-import { supabase } from './supabaseClient'; // Import từ file cấu hình chuẩn
+import { createClient } from '@supabase/supabase-js';
+import { 
+  User, Lock, LogOut, Save, RefreshCcw, 
+  CheckCircle2, Circle, Clock, FileText, send 
+} from 'lucide-react';
 
+// --- 1. CẤU HÌNH SUPABASE (Giữ nguyên) ---
+const SUPABASE_URL = 'https://fjpgxvroomyiphhgnezo.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_lLMFT2OAjmU2bfp9Uq1RpQ_FzUa0mFi';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// --- 2. DỮ LIỆU CẤU HÌNH (Giữ nguyên logic) ---
+const USERS = {
+  admin: { name: "Quản Lý", role: "admin" },
+  nam_np: { name: "Nam Nhà Phao", role: "nam_np" },
+  nu_np: { name: "Nữ Nhà Phao", role: "nu_np" },
+  nam_xd: { name: "Nam Xe Điện", role: "nam_xd" },
+  nu_xd: { name: "Nữ Xe Điện", role: "nu_xd" }
+};
+
+const CHECKLISTS = {
+  nam_np: { title: "Khu Nhà Phao (Nam)", tasks: [
+      {t:"15:30", d:"Check-in, Dọn xe"}, {t:"16:00", d:"Dán ống, bơm, gỡ bạt"}, {t:"16:00", d:"Dọn hồ cá, bơm nước"},
+      {t:"Khi đầy", d:"Lau nhà hơi"}, {t:"17:30", d:"Treo đèn"}, {t:"18:30", d:"Nhặt rác"},
+      {t:"20:00", d:"Xả nhà phao, gấp bạt"}, {t:"Cuối ca", d:"Báo số nước", input:true},
+      {t:"Cuối ca", d:"Tắt đèn, rút điện"}, {t:"21:00", d:"Check-out", input:true}
+  ]},
+  nu_np: { title: "Khu Nhà Phao (Nữ)", tasks: [
+      {t:"15:30", d:"Check-in, Phụ dọn"}, {t:"Đầu ca", d:"Kiểm kê nước đầu ca", input:true},
+      {t:"18:00", d:"Đốt nhang muỗi"}, {t:"18:30", d:"Nhặt rác"}, {t:"20:00", d:"Dọn dẹp, kéo bạt"},
+      {t:"Cuối ca", d:"Kiểm kê nước cuối ca", input:true}, {t:"Cuối ca", d:"Sạc đèn"}, {t:"21:00", d:"Check-out"}
+  ]},
+  // Thêm các role khác nếu cần
+};
+
+// --- 3. COMPONENT CHÍNH ---
 export default function App() {
-  // --- STATE QUẢN LÝ ---
-  const [currentUser, setCurrentUser] = useState(null);
+  // State quản lý trạng thái ứng dụng
+  const [user, setUser] = useState(null); // Thay cho biến currentUser
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-  const [employees, setEmployees] = useState([]);
-  const [error, setError] = useState('');
+  const [checklistData, setChecklistData] = useState({}); // Thay cho biến globalData
   const [loading, setLoading] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('checking'); // 'connected', 'error'
-  const [stats, setStats] = useState({
-    total: 0,
-    online: 0,
-    avgProgress: 0,
-    todayTasks: 0
-  });
+  const [notification, setNotification] = useState('');
 
-  // Tài khoản demo (Hardcode cho login)
-  const accounts = {
-    admin: { password: 'admin123', role: 'admin', name: 'Quản trị viên Hệ thống' },
-    manager: { password: 'manager123', role: 'manager', name: 'Nguyễn Văn Quản lý' },
-    user1: { password: 'user123', role: 'employee', name: 'Trần Thị Nhân viên' }
-  };
+  // --- HÀM HỖ TRỢ (Utility) ---
+  function getTodayISO() {
+    const tzOffset = (new Date()).getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(Date.now() - tzOffset)).toISOString().slice(0, -1);
+    return localISOTime.split('T')[0];
+  }
 
-  // --- EFFECT & LOGIC ---
-  useEffect(() => {
-    if (currentUser) {
-      fetchEmployees();
-    }
-  }, [currentUser]);
+  function showNotify(msg) {
+    setNotification(msg);
+    setTimeout(() => setNotification(''), 3000);
+  }
 
-  // Hàm lấy dữ liệu từ Supabase
-  const fetchEmployees = async () => {
+  // --- TƯƠNG TÁC SUPABASE ---
+  async function fetchTodayData() {
     setLoading(true);
-    setError('');
+    const today = getTodayISO();
     try {
-      const { data, error } = await supabase
-        .from('employees')
-        .select('*')
-        .order('id', { ascending: true });
-
+      let { data, error } = await supabase
+        .from('checklist_logs')
+        .select('role, data')
+        .eq('report_date', today);
+      
       if (error) throw error;
 
-      if (data) {
-        setEmployees(data);
-        calculateStats(data);
-        setLastUpdate(new Date().toLocaleTimeString('vi-VN'));
-        setConnectionStatus('connected');
+      const newData = {};
+      if (data && data.length > 0) {
+        data.forEach(row => { newData[row.role] = row.data; });
       }
+      setChecklistData(newData);
+      showNotify("✅ Đã đồng bộ dữ liệu!");
     } catch (err) {
-      console.error('Lỗi tải dữ liệu:', err);
-      setError(`Không thể kết nối dữ liệu: ${err.message}`);
-      setConnectionStatus('error');
+      console.error(err);
+      showNotify("❌ Lỗi tải dữ liệu");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // Tính toán thống kê
-  const calculateStats = (data) => {
-    if (!data || data.length === 0) return;
-    const online = data.filter(e => e.status === 'online').length;
-    const avgProgress = Math.round(
-      data.reduce((acc, e) => acc + (e.task_progress || 0), 0) / data.length
-    );
-    const todayTasks = data.reduce((acc, e) => acc + (e.tasks_completed || 0), 0);
+  async function pushData() {
+    if (!user) return;
+    setLoading(true);
+    const today = getTodayISO();
+    const myRoleData = checklistData[user.role] || {};
+    
+    try {
+      // Đánh dấu là đã gửi (sent = true) cho các mục đã check
+      const dataToSend = { ...myRoleData };
+      Object.keys(dataToSend).forEach(key => {
+        if (dataToSend[key].done) dataToSend[key].sent = true;
+      });
 
-    setStats({
-      total: data.length,
-      online: online,
-      avgProgress: avgProgress || 0,
-      todayTasks: todayTasks
-    });
-  };
+      const { error } = await supabase
+        .from('checklist_logs')
+        .upsert({
+          report_date: today,
+          role: user.role,
+          data: dataToSend
+        }, { onConflict: 'report_date, role' });
 
-  // Xử lý đăng nhập
+      if (error) throw error;
+      showNotify("☁️ Gửi thành công lên Server!");
+      await fetchTodayData(); // Tải lại để cập nhật trạng thái sent
+    } catch (err) {
+      console.error(err);
+      showNotify("❌ Lỗi gửi dữ liệu");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Tự động tải dữ liệu khi đăng nhập thành công
+  useEffect(() => {
+    if (user) {
+      fetchTodayData();
+    }
+  }, [user]);
+
+  // --- XỬ LÝ GIAO DIỆN ---
   const handleLogin = () => {
-    setError('');
-    const account = accounts[loginForm.username];
-    if (!account) {
-      setError('Tên đăng nhập không tồn tại (Gợi ý: admin, manager)');
-      return;
+    const u = loginForm.username;
+    const p = loginForm.password;
+    
+    // Giả lập logic check pass '123' như code cũ
+    if (USERS[u] && p === '123') {
+      setUser({ ...USERS[u], username: u });
+    } else {
+      showNotify("❌ Sai thông tin đăng nhập!");
     }
-    if (account.password !== loginForm.password) {
-      setError('Mật khẩu không chính xác (Gợi ý: admin123)');
-      return;
-    }
-    setCurrentUser({
-      username: loginForm.username,
-      role: account.role,
-      name: account.name
-    });
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setEmployees([]);
-    setLoginForm({ username: '', password: '' });
-  };
+  const handleTaskToggle = (taskIndex) => {
+    // Logic: Clone state -> Sửa -> Set lại state
+    const currentRoleData = { ...(checklistData[user.role] || {}) };
+    const taskItem = currentRoleData[taskIndex] || {};
 
-  // Helper UI
-  const getPerformanceBadge = (performance) => {
-    const badges = {
-      'Xuất sắc': 'bg-green-100 text-green-700',
-      'Tốt': 'bg-blue-100 text-blue-700',
-      'Trung bình': 'bg-yellow-100 text-yellow-700',
-      'Cần cải thiện': 'bg-red-100 text-red-700'
+    if (taskItem.sent) {
+      showNotify("⚠️ Mục này đã gửi, không thể sửa!");
+      return;
+    }
+
+    // Toggle trạng thái done
+    const isDone = !taskItem.done;
+    
+    currentRoleData[taskIndex] = {
+      ...taskItem,
+      done: isDone,
+      time: isDone ? new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : ''
     };
-    return badges[performance] || 'bg-gray-100 text-gray-700';
+
+    setChecklistData({ ...checklistData, [user.role]: currentRoleData });
   };
 
-  // --- GIAO DIỆN ĐĂNG NHẬP ---
-  if (!currentUser) {
+  const handleInputChange = (taskIndex, value) => {
+    const currentRoleData = { ...(checklistData[user.role] || {}) };
+    const taskItem = currentRoleData[taskIndex] || {};
+
+    if (taskItem.sent) return;
+
+    currentRoleData[taskIndex] = {
+      ...taskItem,
+      val: value
+    };
+    setChecklistData({ ...checklistData, [user.role]: currentRoleData });
+  };
+
+  // --- RENDER MÀN HÌNH ---
+
+  // 1. Màn hình Login
+  if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-700 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gradient-to-br from-blue-600 to-purple-700 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
-            <div className="inline-block p-4 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-2xl mb-4 shadow-lg">
-              <Users className="w-14 h-14 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Đăng nhập</h1>
-            <p className="text-gray-600">Quản lý nhân sự</p>
+            <h1 className="text-3xl font-bold text-gray-800">Checklist App</h1>
+            <p className="text-gray-500">Hệ thống báo cáo công việc</p>
           </div>
-
-          <div className="space-y-5">
-            <input
-              type="text"
-              value={loginForm.username}
-              onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-purple-500 outline-none transition-all"
-              placeholder="Tên đăng nhập (admin)"
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-            />
-            <input
-              type="password"
-              value={loginForm.password}
-              onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:border-purple-500 outline-none transition-all"
-              placeholder="Mật khẩu (admin123)"
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-            />
-
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center">
-                <AlertCircle className="w-4 h-4 mr-2" /> {error}
-              </div>
-            )}
-
-            <button
-              onClick={handleLogin}
-              className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3.5 rounded-xl font-bold hover:shadow-lg transform hover:-translate-y-0.5 transition-all"
-            >
+          <div className="space-y-4">
+            <div className="flex items-center border-2 rounded-xl px-3 py-2">
+              <User className="text-gray-400 mr-2" />
+              <input 
+                type="text" 
+                placeholder="Username (vd: nam_np)" 
+                className="w-full outline-none"
+                value={loginForm.username}
+                onChange={e => setLoginForm({...loginForm, username: e.target.value})}
+              />
+            </div>
+            <div className="flex items-center border-2 rounded-xl px-3 py-2">
+              <Lock className="text-gray-400 mr-2" />
+              <input 
+                type="password" 
+                placeholder="Password" 
+                className="w-full outline-none"
+                value={loginForm.password}
+                onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+                onKeyDown={e => e.key === 'Enter' && handleLogin()}
+              />
+            </div>
+            <button onClick={handleLogin} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition">
               Đăng nhập
             </button>
+            {notification && <p className="text-red-500 text-center text-sm">{notification}</p>}
           </div>
         </div>
       </div>
     );
   }
 
-  // --- GIAO DIỆN DASHBOARD ---
+  // 2. Màn hình Dashboard
   return (
-    <div className="min-h-screen bg-slate-50 font-sans">
-      {/* Loading Overlay */}
-      {loading && (
-        <div className="fixed inset-0 bg-white/80 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="flex flex-col items-center">
-            <RefreshCw className="w-10 h-10 text-purple-600 animate-spin mb-3" />
-            <span className="text-gray-600 font-medium">Đang đồng bộ dữ liệu...</span>
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
+          <div>
+            <h2 className="font-bold text-xl text-gray-800">{user.name}</h2>
+            <p className="text-xs text-gray-500">{user.role} • {getTodayISO()}</p>
           </div>
+          <div className="flex gap-2">
+            <button onClick={fetchTodayData} className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200" title="Làm mới">
+              <RefreshCcw size={20} className={loading ? "animate-spin" : ""} />
+            </button>
+            <button onClick={() => setUser(null)} className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200" title="Đăng xuất">
+              <LogOut size={20} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Notification Toast */}
+      {notification && (
+        <div className="fixed top-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-bounce">
+          {notification}
         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <Users className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-800">Quản lý Nhân Sự</h1>
-              <p className="text-xs text-gray-500 flex items-center gap-1">
-                {connectionStatus === 'connected' ?
-                  <span className="text-green-600 flex items-center gap-1">● Đã kết nối Supabase</span> :
-                  <span className="text-red-500 flex items-center gap-1">● Mất kết nối</span>
-                }
-                {lastUpdate && <span>| Cập nhật: {lastUpdate}</span>}
-              </p>
-            </div>
+      {/* Main Content */}
+      <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
+        
+        {/* ADMIN VIEW */}
+        {user.role === 'admin' ? (
+          <div className="space-y-6">
+             <h3 className="text-lg font-bold text-gray-700">Tổng hợp báo cáo</h3>
+             {Object.keys(CHECKLISTS).map(roleKey => {
+               const roleTasks = checklistData[roleKey] || {};
+               const config = CHECKLISTS[roleKey];
+               return (
+                 <div key={roleKey} className="bg-white p-4 rounded-xl shadow-sm border">
+                   <h4 className="font-bold text-blue-600 border-b pb-2 mb-2">{config.title}</h4>
+                   <div className="space-y-1">
+                     {Object.keys(roleTasks).map(idx => {
+                       const task = roleTasks[idx];
+                       if(task.sent) {
+                         return (
+                           <div key={idx} className="text-sm flex justify-between items-center bg-green-50 p-2 rounded">
+                             <span>✅ Task {idx}: {task.time}</span>
+                             {task.val && <span className="font-mono text-gray-600">"{task.val}"</span>}
+                           </div>
+                         )
+                       }
+                       return null;
+                     })}
+                     {Object.keys(roleTasks).filter(k => roleTasks[k].sent).length === 0 && <p className="text-gray-400 text-sm italic">Chưa có dữ liệu</p>}
+                   </div>
+                 </div>
+               )
+             })}
           </div>
+        ) : (
+          
+        /* STAFF VIEW */
+        <div className="space-y-3">
+           <div className="flex justify-between items-center mb-4">
+             <h3 className="text-lg font-bold text-gray-700">Danh sách công việc</h3>
+             <span className="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+               {CHECKLISTS[user.role]?.title}
+             </span>
+           </div>
 
-          <div className="flex items-center gap-3">
-            <button onClick={fetchEmployees} className="p-2 text-gray-600 hover:bg-gray-100 rounded-full transition-colors" title="Làm mới">
-              <RefreshCw className="w-5 h-5" />
-            </button>
-            <div className="h-8 w-px bg-gray-200 mx-1"></div>
-            <div className="text-right hidden sm:block">
-              <div className="text-sm font-bold text-gray-800">{currentUser.name}</div>
-              <div className="text-xs text-gray-500 capitalize">{currentUser.role}</div>
-            </div>
-            <button onClick={handleLogout} className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors flex items-center gap-2">
-              <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Thoát</span>
-            </button>
-          </div>
+           {CHECKLISTS[user.role]?.tasks.map((task, idx) => {
+             const myData = checklistData[user.role] || {};
+             const item = myData[idx] || {};
+             const isDone = item.done;
+             const isSent = item.sent;
+
+             return (
+               <div key={idx} 
+                 className={`bg-white p-4 rounded-xl border transition-all ${isDone ? 'border-green-500 shadow-md' : 'border-gray-200'}`}
+               >
+                 <div className="flex items-start gap-3">
+                   {/* Checkbox Button */}
+                   <button 
+                     onClick={() => handleTaskToggle(idx)}
+                     disabled={isSent}
+                     className={`mt-1 flex-shrink-0 transition-colors ${isSent ? 'text-gray-400 cursor-not-allowed' : (isDone ? 'text-green-500' : 'text-gray-300 hover:text-gray-400')}`}
+                   >
+                     {isDone ? <CheckCircle2 size={28} /> : <Circle size={28} />}
+                   </button>
+
+                   <div className="flex-1">
+                     <div className="flex justify-between items-start">
+                        <span className={`font-medium text-gray-800 ${isDone && 'line-through text-gray-400'}`}>
+                          {task.d}
+                        </span>
+                        <span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded text-gray-600">
+                          {item.time || task.t}
+                        </span>
+                     </div>
+
+                     {/* Input field nếu task yêu cầu */}
+                     {task.input && (
+                       <div className={`mt-3 flex items-center bg-gray-50 px-3 py-2 rounded-lg ${!isDone && 'opacity-50'}`}>
+                         <FileText size={16} className="text-gray-400 mr-2"/>
+                         <input 
+                            type="text"
+                            disabled={!isDone || isSent}
+                            value={item.val || ''}
+                            onChange={(e) => handleInputChange(idx, e.target.value)}
+                            placeholder="Nhập số liệu/ghi chú..."
+                            className="bg-transparent w-full outline-none text-sm text-gray-700"
+                         />
+                       </div>
+                     )}
+                     
+                     {isSent && <p className="text-xs text-green-600 mt-1 font-semibold">✓ Đã gửi server</p>}
+                   </div>
+                 </div>
+               </div>
+             )
+           })}
         </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        {/* Báo lỗi nếu có */}
-        {error && (
-          <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg flex items-center text-red-700 shadow-sm">
-             <AlertCircle className="w-6 h-6 mr-3 flex-shrink-0" />
-             <div>
-               <p className="font-bold">Lỗi kết nối</p>
-               <p className="text-sm">{error}</p>
-             </div>
-          </div>
         )}
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <StatCard icon={Users} color="blue" label="Tổng nhân sự" value={stats.total} sub="Người" />
-          <StatCard icon={UserCheck} color="green" label="Đang Online" value={stats.online} sub="Đang hoạt động" />
-          <StatCard icon={Activity} color="purple" label="Tiến độ TB" value={`${stats.avgProgress}%`} sub="Hiệu suất chung" />
-          <StatCard icon={TrendingUp} color="orange" label="Việc hoàn thành" value={stats.todayTasks} sub="Task hôm nay" />
-        </div>
-
-        {/* Employee List */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <Award className="w-5 h-5 text-indigo-600" /> Danh sách nhân viên
-            </h2>
-          </div>
-
-          <div className="divide-y divide-gray-100">
-            {employees.length === 0 && !loading ? (
-              <div className="p-12 text-center text-gray-400">
-                <Users className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                <p>Chưa có dữ liệu nhân viên.</p>
-                <p className="text-sm mt-2">Hãy thêm dữ liệu vào bảng 'employees' trên Supabase.</p>
-              </div>
-            ) : (
-              employees.map((emp) => (
-                <div key={emp.id} className="p-6 hover:bg-gray-50 transition-colors group">
-                  <div className="flex flex-col md:flex-row gap-6">
-                    {/* Avatar & Basic Info */}
-                    <div className="flex gap-4 flex-1">
-                      <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-xl shadow-md flex-shrink-0">
-                        {emp.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-bold text-gray-900 text-lg">{emp.name}</h3>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getPerformanceBadge(emp.performance)}`}>
-                            {emp.performance}
-                          </span>
-                        </div>
-                        <p className="text-indigo-600 font-medium text-sm">{emp.position}</p>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-gray-500">
-                           <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {emp.location || 'N/A'}</span>
-                           <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Check-in: {emp.check_in || '--:--'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Status & Progress */}
-                    <div className="flex flex-col justify-center md:w-64 gap-3">
-                      <div className="flex justify-between items-center text-sm">
-                         <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${emp.status === 'online' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                           <div className={`w-2 h-2 rounded-full ${emp.status === 'online' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-                           {emp.status === 'online' ? 'Online' : 'Offline'}
-                         </span>
-                         <span className="text-gray-500 text-xs font-medium">{emp.work_hours || '0h'} làm việc</span>
-                      </div>
-
-                      <div>
-                        <div className="flex justify-between text-xs mb-1.5">
-                          <span className="text-gray-600 font-medium">Tiến độ: {emp.task_progress}%</span>
-                          <span className="text-gray-400">{emp.tasks_completed}/{emp.tasks_total} việc</span>
-                        </div>
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
-                            style={{ width: `${emp.task_progress}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-// Component con để code gọn hơn
-function StatCard({ icon: Icon, color, label, value, sub }) {
-  const colors = {
-    blue: 'text-blue-600 bg-blue-100 border-blue-200',
-    green: 'text-green-600 bg-green-100 border-green-200',
-    purple: 'text-purple-600 bg-purple-100 border-purple-200',
-    orange: 'text-orange-600 bg-orange-100 border-orange-200',
-  };
-
-  return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-      <div className="flex justify-between items-start">
-        <div>
-          <p className="text-sm font-medium text-gray-500 mb-1">{label}</p>
-          <h3 className="text-3xl font-bold text-gray-800">{value}</h3>
-          <p className="text-xs text-gray-400 mt-2">{sub}</p>
-        </div>
-        <div className={`p-3 rounded-xl ${colors[color]}`}>
-          <Icon className="w-6 h-6" />
-        </div>
       </div>
+
+      {/* Floating Action Button (Nút gửi) - Chỉ hiện cho Staff */}
+      {user.role !== 'admin' && (
+        <div className="fixed bottom-6 left-0 right-0 px-4 max-w-4xl mx-auto">
+          <button 
+            onClick={pushData}
+            disabled={loading}
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg hover:shadow-xl transition-all transform active:scale-95 flex justify-center items-center gap-2"
+          >
+            {loading ? <RefreshCcw className="animate-spin" /> : <Save />}
+            {loading ? "Đang xử lý..." : "Gửi báo cáo lên Server"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
