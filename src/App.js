@@ -1,16 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { 
-  User, Lock, LogOut, Save, RefreshCcw, 
-  CheckCircle2, Circle, Clock, FileText, send 
+import { supabase } from './supabaseClient'; // Import từ file cấu hình
+import {
+  User, Lock, LogOut, RefreshCcw,
+  CheckCircle2, Circle, Clock, FileText, Send, Loader2
 } from 'lucide-react';
 
-// --- 1. CẤU HÌNH SUPABASE (Giữ nguyên) ---
-const SUPABASE_URL = 'https://fjpgxvroomyiphhgnezo.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_lLMFT2OAjmU2bfp9Uq1RpQ_FzUa0mFi';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// --- 2. DỮ LIỆU CẤU HÌNH (Giữ nguyên logic) ---
+// --- DỮ LIỆU CẤU HÌNH ---
 const USERS = {
   admin: { name: "Quản Lý", role: "admin" },
   nam_np: { name: "Nam Nhà Phao", role: "nam_np" },
@@ -31,325 +26,403 @@ const CHECKLISTS = {
       {t:"18:00", d:"Đốt nhang muỗi"}, {t:"18:30", d:"Nhặt rác"}, {t:"20:00", d:"Dọn dẹp, kéo bạt"},
       {t:"Cuối ca", d:"Kiểm kê nước cuối ca", input:true}, {t:"Cuối ca", d:"Sạc đèn"}, {t:"21:00", d:"Check-out"}
   ]},
-  // Thêm các role khác nếu cần
 };
 
-// --- 3. COMPONENT CHÍNH ---
+// --- COMPONENT CHÍNH ---
 export default function App() {
-  // State quản lý trạng thái ứng dụng
-  const [user, setUser] = useState(null); // Thay cho biến currentUser
+  const [user, setUser] = useState(null);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-  const [checklistData, setChecklistData] = useState({}); // Thay cho biến globalData
-  const [loading, setLoading] = useState(false);
-  const [notification, setNotification] = useState('');
+  const [checklistData, setChecklistData] = useState({});
+  const [loadingGlobal, setLoadingGlobal] = useState(false);
+  const [sendingTaskIndex, setSendingTaskIndex] = useState(null); // Theo dõi task nào đang gửi
+  const [notification, setNotification] = useState({ msg: '', type: '' });
 
-  // --- HÀM HỖ TRỢ (Utility) ---
-  function getTodayISO() {
+  // --- UTILS ---
+  const getTodayISO = () => {
     const tzOffset = (new Date()).getTimezoneOffset() * 60000;
-    const localISOTime = (new Date(Date.now() - tzOffset)).toISOString().slice(0, -1);
-    return localISOTime.split('T')[0];
-  }
+    return (new Date(Date.now() - tzOffset)).toISOString().split('T')[0];
+  };
 
-  function showNotify(msg) {
-    setNotification(msg);
-    setTimeout(() => setNotification(''), 3000);
-  }
+  const showNotify = (msg, type = 'success') => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification({ msg: '', type: '' }), 3000);
+  };
 
-  // --- TƯƠNG TÁC SUPABASE ---
-  async function fetchTodayData() {
-    setLoading(true);
+  // --- LOGIC SUPABASE ---
+  const fetchTodayData = async () => {
+    setLoadingGlobal(true);
     const today = getTodayISO();
     try {
       let { data, error } = await supabase
         .from('checklist_logs')
         .select('role, data')
         .eq('report_date', today);
-      
+
       if (error) throw error;
 
       const newData = {};
-      if (data && data.length > 0) {
+      if (data?.length) {
         data.forEach(row => { newData[row.role] = row.data; });
       }
       setChecklistData(newData);
-      showNotify("✅ Đã đồng bộ dữ liệu!");
+      if(user) showNotify("Đã đồng bộ dữ liệu mới nhất");
     } catch (err) {
       console.error(err);
-      showNotify("❌ Lỗi tải dữ liệu");
+      showNotify("Lỗi tải dữ liệu", "error");
     } finally {
-      setLoading(false);
+      setLoadingGlobal(false);
     }
-  }
+  };
 
-  async function pushData() {
+  // Hàm gửi dữ liệu cho 1 Task cụ thể
+  const sendSingleTask = async (taskIndex) => {
     if (!user) return;
-    setLoading(true);
-    const today = getTodayISO();
-    const myRoleData = checklistData[user.role] || {};
-    
-    try {
-      // Đánh dấu là đã gửi (sent = true) cho các mục đã check
-      const dataToSend = { ...myRoleData };
-      Object.keys(dataToSend).forEach(key => {
-        if (dataToSend[key].done) dataToSend[key].sent = true;
-      });
 
+    // 1. Lấy dữ liệu hiện tại
+    const currentRoleData = { ...(checklistData[user.role] || {}) };
+    const taskItem = currentRoleData[taskIndex];
+
+    if (!taskItem || !taskItem.done) {
+      showNotify("Vui lòng hoàn thành công việc trước khi gửi!", "error");
+      return;
+    }
+    if (taskItem.sent) return; // Đã gửi rồi thì thôi
+
+    setSendingTaskIndex(taskIndex); // Bật loading cho nút này
+
+    try {
+      // 2. Cập nhật trạng thái 'sent' cho task này
+      taskItem.sent = true;
+      currentRoleData[taskIndex] = taskItem;
+
+      // 3. Gửi toàn bộ object JSON lên (Supabase lưu JSONB)
+      const today = getTodayISO();
       const { error } = await supabase
         .from('checklist_logs')
         .upsert({
           report_date: today,
           role: user.role,
-          data: dataToSend
+          data: currentRoleData
         }, { onConflict: 'report_date, role' });
 
       if (error) throw error;
-      showNotify("☁️ Gửi thành công lên Server!");
-      await fetchTodayData(); // Tải lại để cập nhật trạng thái sent
+
+      // 4. Cập nhật UI
+      setChecklistData({ ...checklistData, [user.role]: currentRoleData });
+      showNotify("Đã gửi báo cáo thành công!");
     } catch (err) {
       console.error(err);
-      showNotify("❌ Lỗi gửi dữ liệu");
+      showNotify("Gửi thất bại, vui lòng thử lại", "error");
+
+      // Revert trạng thái sent nếu lỗi
+      taskItem.sent = false;
+      currentRoleData[taskIndex] = taskItem;
+      setChecklistData({ ...checklistData, [user.role]: currentRoleData });
     } finally {
-      setLoading(false);
-    }
-  }
-
-  // Tự động tải dữ liệu khi đăng nhập thành công
-  useEffect(() => {
-    if (user) {
-      fetchTodayData();
-    }
-  }, [user]);
-
-  // --- XỬ LÝ GIAO DIỆN ---
-  const handleLogin = () => {
-    const u = loginForm.username;
-    const p = loginForm.password;
-    
-    // Giả lập logic check pass '123' như code cũ
-    if (USERS[u] && p === '123') {
-      setUser({ ...USERS[u], username: u });
-    } else {
-      showNotify("❌ Sai thông tin đăng nhập!");
+      setSendingTaskIndex(null);
     }
   };
 
-  const handleTaskToggle = (taskIndex) => {
-    // Logic: Clone state -> Sửa -> Set lại state
-    const currentRoleData = { ...(checklistData[user.role] || {}) };
-    const taskItem = currentRoleData[taskIndex] || {};
+  useEffect(() => {
+    if (user) fetchTodayData();
+  }, [user]);
 
-    if (taskItem.sent) {
-      showNotify("⚠️ Mục này đã gửi, không thể sửa!");
-      return;
+  // --- HANDLERS ---
+  const handleLogin = () => {
+    const { username, password } = loginForm;
+    if (USERS[username] && password === '123') {
+      setUser({ ...USERS[username], username });
+    } else {
+      showNotify("Sai thông tin đăng nhập!", "error");
     }
+  };
 
-    // Toggle trạng thái done
+  const handleTaskToggle = (idx) => {
+    const currentRoleData = { ...(checklistData[user.role] || {}) };
+    const taskItem = currentRoleData[idx] || {};
+
+    if (taskItem.sent) return; // Đã gửi thì khóa
+
     const isDone = !taskItem.done;
-    
-    currentRoleData[taskIndex] = {
+    currentRoleData[idx] = {
       ...taskItem,
       done: isDone,
       time: isDone ? new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : ''
     };
-
     setChecklistData({ ...checklistData, [user.role]: currentRoleData });
   };
 
-  const handleInputChange = (taskIndex, value) => {
+  const handleInputChange = (idx, val) => {
     const currentRoleData = { ...(checklistData[user.role] || {}) };
-    const taskItem = currentRoleData[taskIndex] || {};
+    if (currentRoleData[idx]?.sent) return;
 
-    if (taskItem.sent) return;
-
-    currentRoleData[taskIndex] = {
-      ...taskItem,
-      val: value
-    };
+    currentRoleData[idx] = { ...currentRoleData[idx], val };
     setChecklistData({ ...checklistData, [user.role]: currentRoleData });
   };
 
-  // --- RENDER MÀN HÌNH ---
+  // --- RENDER ---
+  if (!user) return <LoginScreen loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} />;
 
-  // 1. Màn hình Login
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-600 to-purple-700 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-800">Checklist App</h1>
-            <p className="text-gray-500">Hệ thống báo cáo công việc</p>
-          </div>
-          <div className="space-y-4">
-            <div className="flex items-center border-2 rounded-xl px-3 py-2">
-              <User className="text-gray-400 mr-2" />
-              <input 
-                type="text" 
-                placeholder="Username (vd: nam_np)" 
-                className="w-full outline-none"
-                value={loginForm.username}
-                onChange={e => setLoginForm({...loginForm, username: e.target.value})}
-              />
-            </div>
-            <div className="flex items-center border-2 rounded-xl px-3 py-2">
-              <Lock className="text-gray-400 mr-2" />
-              <input 
-                type="password" 
-                placeholder="Password" 
-                className="w-full outline-none"
-                value={loginForm.password}
-                onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-                onKeyDown={e => e.key === 'Enter' && handleLogin()}
-              />
-            </div>
-            <button onClick={handleLogin} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition">
-              Đăng nhập
-            </button>
-            {notification && <p className="text-red-500 text-center text-sm">{notification}</p>}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // 2. Màn hình Dashboard
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+      {/* Toast Notification */}
+      {notification.msg && (
+        <div className={`fixed top-6 right-6 z-50 px-6 py-3 rounded-lg shadow-xl transform transition-all animate-in slide-in-from-top-5 fade-in duration-300 flex items-center gap-2 font-medium ${notification.type === 'error' ? 'bg-rose-500 text-white' : 'bg-emerald-600 text-white'}`}>
+          {notification.type === 'error' ? <CheckCircle2 className="rotate-45" /> : <CheckCircle2 />}
+          {notification.msg}
+        </div>
+      )}
+
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div>
-            <h2 className="font-bold text-xl text-gray-800">{user.name}</h2>
-            <p className="text-xs text-gray-500">{user.role} • {getTodayISO()}</p>
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-lg">
+              {user.name.charAt(0)}
+            </div>
+            <div>
+              <h1 className="font-bold text-slate-800 leading-tight">{user.name}</h1>
+              <p className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                <Clock size={12} /> {getTodayISO()}
+              </p>
+            </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={fetchTodayData} className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200" title="Làm mới">
-              <RefreshCcw size={20} className={loading ? "animate-spin" : ""} />
+            <button onClick={fetchTodayData} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-all">
+              <RefreshCcw size={20} className={loadingGlobal ? "animate-spin text-blue-600" : ""} />
             </button>
-            <button onClick={() => setUser(null)} className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200" title="Đăng xuất">
+            <button onClick={() => setUser(null)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-full transition-all">
               <LogOut size={20} />
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Notification Toast */}
-      {notification && (
-        <div className="fixed top-4 right-4 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-bounce">
-          {notification}
-        </div>
-      )}
+      </header>
 
       {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-4 py-6 pb-24">
-        
-        {/* ADMIN VIEW */}
+      <main className="max-w-5xl mx-auto px-4 py-6">
         {user.role === 'admin' ? (
-          <div className="space-y-6">
-             <h3 className="text-lg font-bold text-gray-700">Tổng hợp báo cáo</h3>
-             {Object.keys(CHECKLISTS).map(roleKey => {
-               const roleTasks = checklistData[roleKey] || {};
-               const config = CHECKLISTS[roleKey];
-               return (
-                 <div key={roleKey} className="bg-white p-4 rounded-xl shadow-sm border">
-                   <h4 className="font-bold text-blue-600 border-b pb-2 mb-2">{config.title}</h4>
-                   <div className="space-y-1">
-                     {Object.keys(roleTasks).map(idx => {
-                       const task = roleTasks[idx];
-                       if(task.sent) {
-                         return (
-                           <div key={idx} className="text-sm flex justify-between items-center bg-green-50 p-2 rounded">
-                             <span>✅ Task {idx}: {task.time}</span>
-                             {task.val && <span className="font-mono text-gray-600">"{task.val}"</span>}
-                           </div>
-                         )
-                       }
-                       return null;
-                     })}
-                     {Object.keys(roleTasks).filter(k => roleTasks[k].sent).length === 0 && <p className="text-gray-400 text-sm italic">Chưa có dữ liệu</p>}
-                   </div>
-                 </div>
-               )
-             })}
-          </div>
+          <AdminView data={checklistData} />
         ) : (
-          
-        /* STAFF VIEW */
-        <div className="space-y-3">
-           <div className="flex justify-between items-center mb-4">
-             <h3 className="text-lg font-bold text-gray-700">Danh sách công việc</h3>
-             <span className="text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-               {CHECKLISTS[user.role]?.title}
-             </span>
-           </div>
-
-           {CHECKLISTS[user.role]?.tasks.map((task, idx) => {
-             const myData = checklistData[user.role] || {};
-             const item = myData[idx] || {};
-             const isDone = item.done;
-             const isSent = item.sent;
-
-             return (
-               <div key={idx} 
-                 className={`bg-white p-4 rounded-xl border transition-all ${isDone ? 'border-green-500 shadow-md' : 'border-gray-200'}`}
-               >
-                 <div className="flex items-start gap-3">
-                   {/* Checkbox Button */}
-                   <button 
-                     onClick={() => handleTaskToggle(idx)}
-                     disabled={isSent}
-                     className={`mt-1 flex-shrink-0 transition-colors ${isSent ? 'text-gray-400 cursor-not-allowed' : (isDone ? 'text-green-500' : 'text-gray-300 hover:text-gray-400')}`}
-                   >
-                     {isDone ? <CheckCircle2 size={28} /> : <Circle size={28} />}
-                   </button>
-
-                   <div className="flex-1">
-                     <div className="flex justify-between items-start">
-                        <span className={`font-medium text-gray-800 ${isDone && 'line-through text-gray-400'}`}>
-                          {task.d}
-                        </span>
-                        <span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded text-gray-600">
-                          {item.time || task.t}
-                        </span>
-                     </div>
-
-                     {/* Input field nếu task yêu cầu */}
-                     {task.input && (
-                       <div className={`mt-3 flex items-center bg-gray-50 px-3 py-2 rounded-lg ${!isDone && 'opacity-50'}`}>
-                         <FileText size={16} className="text-gray-400 mr-2"/>
-                         <input 
-                            type="text"
-                            disabled={!isDone || isSent}
-                            value={item.val || ''}
-                            onChange={(e) => handleInputChange(idx, e.target.value)}
-                            placeholder="Nhập số liệu/ghi chú..."
-                            className="bg-transparent w-full outline-none text-sm text-gray-700"
-                         />
-                       </div>
-                     )}
-                     
-                     {isSent && <p className="text-xs text-green-600 mt-1 font-semibold">✓ Đã gửi server</p>}
-                   </div>
-                 </div>
-               </div>
-             )
-           })}
-        </div>
+          <StaffView
+            config={CHECKLISTS[user.role]}
+            data={checklistData[user.role] || {}}
+            onToggle={handleTaskToggle}
+            onInput={handleInputChange}
+            onSend={sendSingleTask}
+            sendingIndex={sendingTaskIndex}
+          />
         )}
-      </div>
-
-      {/* Floating Action Button (Nút gửi) - Chỉ hiện cho Staff */}
-      {user.role !== 'admin' && (
-        <div className="fixed bottom-6 left-0 right-0 px-4 max-w-4xl mx-auto">
-          <button 
-            onClick={pushData}
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg hover:shadow-xl transition-all transform active:scale-95 flex justify-center items-center gap-2"
-          >
-            {loading ? <RefreshCcw className="animate-spin" /> : <Save />}
-            {loading ? "Đang xử lý..." : "Gửi báo cáo lên Server"}
-          </button>
-        </div>
-      )}
+      </main>
     </div>
   );
 }
+
+// --- SUB COMPONENTS ---
+
+const LoginScreen = ({ loginForm, setLoginForm, handleLogin, notification }) => (
+  <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
+    <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl p-8 w-full max-w-md border border-white/20">
+      <div className="text-center mb-8">
+        <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-blue-500/30">
+          <CheckCircle2 size={32} className="text-white" />
+        </div>
+        <h1 className="text-2xl font-bold text-slate-800">Đăng nhập hệ thống</h1>
+        <p className="text-slate-500 mt-1">Quản lý công việc & báo cáo</p>
+      </div>
+
+      <div className="space-y-5">
+        <div className="group">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Tên đăng nhập</label>
+          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+            <User className="text-slate-400 mr-3" size={20} />
+            <input
+              type="text"
+              className="bg-transparent w-full outline-none text-slate-800 font-medium"
+              placeholder="Ví dụ: nam_np"
+              value={loginForm.username}
+              onChange={e => setLoginForm({...loginForm, username: e.target.value})}
+            />
+          </div>
+        </div>
+
+        <div className="group">
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Mật khẩu</label>
+          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 transition-all">
+            <Lock className="text-slate-400 mr-3" size={20} />
+            <input
+              type="password"
+              className="bg-transparent w-full outline-none text-slate-800 font-medium"
+              placeholder="••••••"
+              value={loginForm.password}
+              onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+            />
+          </div>
+        </div>
+
+        {notification.msg && (
+          <div className="bg-rose-50 text-rose-600 px-4 py-3 rounded-xl text-sm flex items-center gap-2 border border-rose-100">
+            <Circle size={16} className="fill-current" /> {notification.msg}
+          </div>
+        )}
+
+        <button onClick={handleLogin} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-600/30 transition-all transform active:scale-[0.98]">
+          Truy cập Dashboard
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
+const StaffView = ({ config, data, onToggle, onInput, onSend, sendingIndex }) => {
+  if (!config) return <div className="text-center p-8 text-slate-400">Chưa có cấu hình công việc</div>;
+
+  const total = config.tasks.length;
+  const done = Object.values(data).filter(i => i.done).length;
+  const percent = Math.round((done / total) * 100) || 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Progress Bar */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+        <div className="flex justify-between items-end mb-2">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">{config.title}</h2>
+            <p className="text-slate-500 text-sm mt-1">Tiến độ công việc hôm nay</p>
+          </div>
+          <div className="text-right">
+            <span className="text-3xl font-bold text-blue-600">{percent}%</span>
+          </div>
+        </div>
+        <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+          <div
+            className="bg-blue-600 h-full rounded-full transition-all duration-700 ease-out"
+            style={{ width: `${percent}%` }}
+          ></div>
+        </div>
+      </div>
+
+      {/* Task List */}
+      <div className="grid gap-4">
+        {config.tasks.map((task, idx) => {
+          const item = data[idx] || {};
+          const isDone = item.done;
+          const isSent = item.sent;
+          const isSending = sendingIndex === idx;
+
+          return (
+            <div
+              key={idx}
+              className={`group bg-white p-4 sm:p-5 rounded-2xl border transition-all duration-200
+                ${isSent
+                  ? 'border-emerald-200 bg-emerald-50/30'
+                  : (isDone ? 'border-blue-200 shadow-md ring-1 ring-blue-50' : 'border-slate-200 hover:border-blue-300 hover:shadow-sm')
+                }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                {/* Left: Checkbox & Info */}
+                <div className="flex items-start gap-4 flex-1 cursor-pointer" onClick={() => !isSent && onToggle(idx)}>
+                  <div className={`mt-1 p-0.5 rounded-full transition-colors ${isDone ? 'text-blue-600' : 'text-slate-300 group-hover:text-slate-400'}`}>
+                     {isDone ? <CheckCircle2 size={28} className="fill-blue-50" /> : <Circle size={28} />}
+                  </div>
+                  <div className="flex-1">
+                    <h3 className={`font-semibold text-base sm:text-lg ${isDone ? 'text-slate-700' : 'text-slate-900'}`}>
+                      {task.d}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-md border border-slate-200">
+                        {item.time || task.t}
+                      </span>
+                      {isSent && (
+                        <span className="text-xs font-bold text-emerald-600 flex items-center gap-1 bg-emerald-100 px-2 py-1 rounded-md">
+                          <CheckCircle2 size={12} /> Đã gửi
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Input & Action */}
+                <div className="flex items-center gap-3 w-full sm:w-auto pl-11 sm:pl-0">
+                  {task.input && (
+                    <div className={`flex-1 sm:flex-none relative ${!isDone ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <FileText size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                      <input
+                        type="text"
+                        disabled={!isDone || isSent}
+                        value={item.val || ''}
+                        onChange={(e) => onInput(idx, e.target.value)}
+                        placeholder="Nhập số liệu..."
+                        className="w-full sm:w-40 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none transition-all"
+                      />
+                    </div>
+                  )}
+
+                  {/* Send Button - Chỉ hiện khi Done và chưa Sent */}
+                  {isDone && !isSent && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onSend(idx); }}
+                      disabled={isSending}
+                      className="bg-blue-600 hover:bg-blue-700 text-white p-2.5 rounded-xl shadow-lg shadow-blue-200 transition-all active:scale-90 flex-shrink-0"
+                      title="Gửi báo cáo này"
+                    >
+                      {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
+                    </button>
+                  )}
+
+                  {/* Disabled Button Placeholder khi chưa Done để layout không bị nhảy (tùy chọn) */}
+                  {(!isDone && !isSent) && <div className="w-10 h-10"></div>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const AdminView = ({ data }) => (
+  <div className="grid gap-6 md:grid-cols-2">
+    {Object.keys(CHECKLISTS).map(roleKey => {
+      const roleTasks = data[roleKey] || {};
+      const config = CHECKLISTS[roleKey];
+      const sentCount = Object.values(roleTasks).filter(t => t.sent).length;
+
+      return (
+        <div key={roleKey} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+            <h3 className="font-bold text-slate-700">{config.title}</h3>
+            <span className="text-xs font-bold bg-white border px-2 py-1 rounded-full text-slate-500">
+              {sentCount}/{config.tasks.length}
+            </span>
+          </div>
+          <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto p-2">
+            {config.tasks.map((task, idx) => {
+              const item = roleTasks[idx];
+              if (!item || !item.sent) return null; // Chỉ hiện cái đã gửi
+              return (
+                <div key={idx} className="p-3 hover:bg-slate-50 rounded-lg flex justify-between items-start gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">{task.d}</p>
+                    <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                      <Clock size={10} /> Hoàn thành lúc {item.time}
+                    </p>
+                  </div>
+                  {item.val && (
+                    <span className="font-mono text-sm bg-amber-50 text-amber-700 border border-amber-100 px-2 py-1 rounded">
+                      {item.val}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {sentCount === 0 && (
+              <div className="p-8 text-center text-slate-400 text-sm italic">Chưa có báo cáo nào được gửi</div>
+            )}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+);
