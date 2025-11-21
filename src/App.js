@@ -5,7 +5,7 @@ import {
   CheckCircle2, Circle, Clock, FileText, Send, Loader2
 } from 'lucide-react';
 
-// --- DỮ LIỆU CẤU HÌNH ---
+// --- DỮ LIỆU CẤU HÌNH moi---
 const USERS = {
   admin: { name: "Quản Lý", role: "admin" },
   nam_np: { name: "Nam Nhà Phao", role: "nam_np" },
