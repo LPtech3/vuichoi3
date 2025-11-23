@@ -1,46 +1,46 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
   onAuthStateChanged,
   signInAnonymously,
   signInWithCustomToken
 } from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  query, 
-  where, 
-  onSnapshot, 
-  serverTimestamp, 
-  orderBy 
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  query,
+  where,
+  onSnapshot,
+  serverTimestamp,
+  orderBy
 } from 'firebase/firestore';
-import { 
-  User, 
-  Briefcase, 
-  CheckCircle, 
-  Clock, 
-  LogOut, 
-  Plus, 
-  Trash2, 
-  Camera, 
-  Users, 
+import {
+  User,
+  Briefcase,
+  CheckCircle,
+  Clock,
+  LogOut,
+  Plus,
+  Trash2,
+  Camera,
+  Users,
   Calendar,
   Image as ImageIcon,
   Shield,
   Menu,
-  X
+  X,
+  MapPin
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
-// Firebase setup is handled automatically by the environment variables provided.
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -54,32 +54,27 @@ const Login = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false); // Simple toggle for demo purposes
+  const [isRegistering, setIsRegistering] = useState(false);
 
   const handleAuth = async (e) => {
     e.preventDefault();
     setError('');
     try {
       if (isRegistering) {
-        // In a real app, registration might be restricted to Admins only
         const cred = await createUserWithEmailAndPassword(auth, email, password);
-        // Create user profile in Firestore
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'users'), {
           uid: cred.user.uid,
           email: email,
           name: email.split('@')[0],
-          role: 'employee', // Default role
+          role: 'employee',
           createdAt: serverTimestamp()
         });
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err) {
-      // Fallback for demo environment if Auth fails or isn't fully set up
       console.error("Auth error:", err);
       setError("Đăng nhập thất bại: " + err.message);
-      
-      // AUTO-FIX for Demo: Allow anonymous login if email fails (for testing UI)
       if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
           setError("Tài khoản không tồn tại. Vui lòng đăng ký trước.");
       }
@@ -98,12 +93,12 @@ const Login = ({ onLoginSuccess }) => {
           {isRegistering ? 'Đăng Ký Tài Khoản' : 'Hệ Thống Quản Lý'}
         </h2>
         {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">{error}</div>}
-        
+
         <form onSubmit={handleAuth} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Email</label>
-            <input 
-              type="email" 
+            <input
+              type="email"
               required
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               value={email}
@@ -112,8 +107,8 @@ const Login = ({ onLoginSuccess }) => {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700">Mật khẩu</label>
-            <input 
-              type="password" 
+            <input
+              type="password"
               required
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               value={password}
@@ -145,9 +140,7 @@ const Login = ({ onLoginSuccess }) => {
 const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
   const [activeTab, setActiveTab] = useState('tasks');
   const [newTask, setNewTask] = useState({ title: '', desc: '', assignedTo: '', requirePhoto: false });
-  const [newUser, setNewUser] = useState({ email: '', name: '', role: 'employee', password: '' });
 
-  // Filter tasks
   const sortedTasks = useMemo(() => tasks.sort((a,b) => b.createdAt?.seconds - a.createdAt?.seconds), [tasks]);
 
   const handleCreateTask = async (e) => {
@@ -172,14 +165,6 @@ const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
     if (window.confirm('Bạn có chắc muốn xóa công việc này?')) {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', id));
     }
-  };
-
-  const handleCreateUser = async (e) => {
-    e.preventDefault();
-    // Note: Creating actual Auth users requires a backend or specific permissions.
-    // Here we simulate by adding to the DB so they appear in the list.
-    // In a real app, use a secondary Firebase App instance or Cloud Function.
-    alert("Tính năng tạo User Auth cần Admin SDK. Ở bản demo này, vui lòng để nhân viên tự đăng ký, sau đó Admin vào sửa quyền.");
   };
 
   const handleUpdateRole = async (userId, newRole) => {
@@ -221,7 +206,7 @@ const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
                 value={newTask.desc}
                 onChange={e => setNewTask({...newTask, desc: e.target.value})}
               ></textarea>
-              <select 
+              <select
                 className="w-full p-2 border rounded"
                 value={newTask.assignedTo} onChange={e => setNewTask({...newTask, assignedTo: e.target.value})}
                 required
@@ -232,8 +217,8 @@ const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
                 ))}
               </select>
               <div className="flex items-center space-x-2">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   id="reqPhoto"
                   checked={newTask.requirePhoto}
                   onChange={e => setNewTask({...newTask, requirePhoto: e.target.checked})}
@@ -305,7 +290,7 @@ const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
                      </span>
                    </td>
                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                     <select 
+                     <select
                         className="border rounded p-1"
                         value={u.role}
                         onChange={(e) => handleUpdateRole(u.id, e.target.value)}
@@ -325,20 +310,45 @@ const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
       {activeTab === 'logs' && (
         <div className="bg-white rounded-lg shadow p-4">
           <h3 className="font-bold mb-4">Lịch Sử Chấm Công</h3>
-          <div className="space-y-2">
+          <div className="space-y-4">
             {logs.length === 0 ? <p className="text-gray-500">Chưa có dữ liệu chấm công.</p> : null}
             {logs.sort((a,b) => b.timestamp?.seconds - a.timestamp?.seconds).map(log => {
                const user = users.find(u => u.uid === log.userId);
                const date = log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString('vi-VN') : 'Đang xử lý...';
                return (
-                 <div key={log.id} className="flex justify-between items-center border-b pb-2">
-                   <div>
-                     <span className="font-medium text-gray-800">{user?.name || log.userId}</span>
-                     <span className={`ml-2 text-xs px-2 py-0.5 rounded ${log.type === 'in' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                       {log.type === 'in' ? 'Vào Ca' : 'Ra Ca'}
-                     </span>
+                 <div key={log.id} className="border rounded-lg p-3 bg-gray-50 flex flex-col sm:flex-row justify-between items-start gap-4">
+                   <div className="flex-1">
+                     <div className="flex items-center gap-2 mb-1">
+                        <span className="font-bold text-gray-800">{user?.name || log.userId}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${log.type === 'in' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                          {log.type === 'in' ? 'Vào Ca' : 'Ra Ca'}
+                        </span>
+                     </div>
+                     <div className="text-sm text-gray-600 flex items-center gap-1">
+                       <Clock className="w-3 h-3"/> {date}
+                     </div>
+                     {log.location && (
+                       <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                         <MapPin className="w-3 h-3"/> {log.location}
+                       </div>
+                     )}
                    </div>
-                   <div className="text-sm text-gray-500">{date}</div>
+
+                   {/* Display Check-in Image */}
+                   {log.checkInImage && (
+                     <div className="flex-shrink-0">
+                       <img
+                          src={log.checkInImage}
+                          alt="Check-in Evidence"
+                          className="h-24 w-auto rounded border shadow-sm cursor-pointer hover:opacity-90"
+                          onClick={() => {
+                            // Simple view in new tab
+                            const w = window.open("");
+                            w.document.write(`<img src="${log.checkInImage}" style="max-width:100%"/>`);
+                          }}
+                       />
+                     </div>
+                   )}
                  </div>
                )
             })}
@@ -349,26 +359,158 @@ const AdminDashboard = ({ currentUser, users, tasks, logs }) => {
   );
 };
 
-// 3. EMPLOYEE DASHBOARD
+// 3. CHECK-IN MODAL COMPONENT (NEW)
+const CheckInModal = ({ type, onClose, onConfirm }) => {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [stream, setStream] = useState(null);
+  const [location, setLocation] = useState(null);
+  const [loadingLoc, setLoadingLoc] = useState(true);
+
+  useEffect(() => {
+    // 1. Get Location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLocation({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
+          setLoadingLoc(false);
+        },
+        (err) => {
+          console.error(err);
+          setLoadingLoc(false);
+          alert("Không thể lấy vị trí. Hãy bật GPS.");
+        }
+      );
+    } else {
+      setLoadingLoc(false);
+    }
+
+    // 2. Start Camera
+    const startCamera = async () => {
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setStream(mediaStream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
+      } catch (err) {
+        console.error("Camera error:", err);
+        alert("Không thể mở camera. Hãy cấp quyền truy cập.");
+      }
+    };
+    startCamera();
+
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  const captureAndConfirm = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    // Set canvas size matches video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw video frame
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Overlay Data
+    const now = new Date().toLocaleString('vi-VN');
+    const locText = location ? `Loc: ${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}` : 'Loc: Unknown';
+
+    // Style for text
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // Semi-transparent background for text
+    ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+
+    ctx.fillStyle = 'white';
+    ctx.font = '16px Arial';
+    ctx.fillText(`${type === 'in' ? 'VÀO CA' : 'RA CA'} - ${now}`, 10, canvas.height - 35);
+    ctx.font = '14px Arial';
+    ctx.fillText(locText, 10, canvas.height - 15);
+
+    // Get Base64
+    const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+    onConfirm(imageData, locText);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg p-4 max-w-sm w-full">
+        <h3 className="text-lg font-bold mb-2 text-center">Xác nhận {type === 'in' ? 'Vào Ca' : 'Ra Ca'}</h3>
+
+        <div className="relative bg-black rounded overflow-hidden aspect-video mb-4">
+           <video
+             ref={videoRef}
+             autoPlay
+             playsInline
+             muted
+             className="w-full h-full object-cover"
+           />
+           <canvas ref={canvasRef} className="hidden" />
+           {loadingLoc && (
+             <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white text-xs px-2 py-1 rounded">
+               Đang lấy GPS...
+             </div>
+           )}
+        </div>
+
+        <div className="text-sm text-gray-600 mb-4 text-center">
+          Vui lòng chụp ảnh khuôn mặt để điểm danh.
+          <br/>
+          {location ? <span className="text-green-600 font-medium">Đã có vị trí</span> : <span className="text-red-500">Chưa có vị trí</span>}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 border rounded text-gray-600 hover:bg-gray-100"
+          >
+            Hủy
+          </button>
+          <button
+            onClick={captureAndConfirm}
+            disabled={loadingLoc}
+            className="flex-1 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            Chụp & Gửi
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 4. EMPLOYEE DASHBOARD
 const EmployeeDashboard = ({ currentUser, myTasks, onLogout }) => {
   const [lastLog, setLastLog] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [uploading, setUploading] = useState(false);
 
+  // Check-in Modal State
+  const [showCheckIn, setShowCheckIn] = useState(false);
+  const [checkInType, setCheckInType] = useState(null);
+
   // Check current check-in status
   useEffect(() => {
-    // In a real app, query the last log from Firestore
-    // Here we just listen to the logs collection passed down, simpler for this view
     const q = query(
       collection(db, 'artifacts', appId, 'public', 'data', 'logs'),
       where('userId', '==', currentUser.uid),
       orderBy('timestamp', 'desc')
-      // limit(1) - cant use limit with desc easily without index in this env
     );
-    
+
     const unsub = onSnapshot(q, (snapshot) => {
         if (!snapshot.empty) {
-            // Client side sorting for simple query
             const docs = snapshot.docs.map(d => d.data());
             docs.sort((a,b) => b.timestamp?.seconds - a.timestamp?.seconds);
             setLastLog(docs[0]);
@@ -377,14 +519,22 @@ const EmployeeDashboard = ({ currentUser, myTasks, onLogout }) => {
     return () => unsub();
   }, [currentUser.uid]);
 
-  const handleCheckIn = async (type) => {
+  const initiateCheckIn = (type) => {
+    setCheckInType(type);
+    setShowCheckIn(true);
+  };
+
+  const handleConfirmCheckIn = async (imageData, locationText) => {
     try {
+      setShowCheckIn(false); // Close modal immediately
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
         userId: currentUser.uid,
-        type: type, // 'in' or 'out'
-        timestamp: serverTimestamp()
+        type: checkInType,
+        timestamp: serverTimestamp(),
+        checkInImage: imageData, // Save base64 image
+        location: locationText
       });
-      alert(type === 'in' ? 'Đã Check-in thành công!' : 'Đã Check-out thành công!');
+      alert(checkInType === 'in' ? 'Đã Check-in thành công!' : 'Đã Check-out thành công!');
     } catch (e) {
       console.error(e);
       alert('Lỗi chấm công');
@@ -395,7 +545,6 @@ const EmployeeDashboard = ({ currentUser, myTasks, onLogout }) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Convert to Base64
     const reader = new FileReader();
     reader.onloadend = () => {
       setSelectedTask(prev => ({ ...prev, tempImage: reader.result }));
@@ -406,12 +555,12 @@ const EmployeeDashboard = ({ currentUser, myTasks, onLogout }) => {
   const submitTask = async () => {
     if (!selectedTask) return;
     setUploading(true);
-    
+
     try {
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'tasks', selectedTask.id), {
         status: 'completed',
         completedAt: serverTimestamp(),
-        evidenceImage: selectedTask.tempImage || null // Saving Base64 directly to Firestore for demo
+        evidenceImage: selectedTask.tempImage || null
       });
       setUploading(false);
       setSelectedTask(null);
@@ -433,18 +582,18 @@ const EmployeeDashboard = ({ currentUser, myTasks, onLogout }) => {
         <div className="text-4xl font-mono text-gray-600 mb-6">
           {new Date().toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'})}
         </div>
-        
+
         <div className="flex justify-center space-x-4">
-          <button 
+          <button
             disabled={isCheckedIn}
-            onClick={() => handleCheckIn('in')}
+            onClick={() => initiateCheckIn('in')}
             className={`flex items-center px-6 py-3 rounded-full text-lg font-bold transition-all ${isCheckedIn ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600 shadow-lg'}`}
           >
             <CheckCircle className="w-6 h-6 mr-2" /> Vào Ca
           </button>
-          <button 
+          <button
             disabled={!isCheckedIn}
-            onClick={() => handleCheckIn('out')}
+            onClick={() => initiateCheckIn('out')}
             className={`flex items-center px-6 py-3 rounded-full text-lg font-bold transition-all ${!isCheckedIn ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-red-500 text-white hover:bg-red-600 shadow-lg'}`}
           >
             <LogOut className="w-6 h-6 mr-2" /> Ra Ca
@@ -454,6 +603,15 @@ const EmployeeDashboard = ({ currentUser, myTasks, onLogout }) => {
           Trạng thái: {isCheckedIn ? <span className="text-green-600 font-bold">Đang làm việc</span> : <span className="text-gray-500">Đã ra về</span>}
         </p>
       </div>
+
+      {/* Check In Camera Modal */}
+      {showCheckIn && (
+        <CheckInModal
+          type={checkInType}
+          onClose={() => setShowCheckIn(false)}
+          onConfirm={handleConfirmCheckIn}
+        />
+      )}
 
       {/* Tasks List */}
       <div>
