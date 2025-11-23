@@ -1,0 +1,7 @@
+lệnh tải lại 
+git add 
+git commit -m "vesion6" 
+git push
+web dùng 
+https://vercel.com/
+https://supabase.com/dashboard/org/cyzdqukwbkczlnzxsewh
