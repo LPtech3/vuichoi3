@@ -8,7 +8,7 @@ import {
   CalendarClock, AlertTriangle, AlertCircle
 } from 'lucide-react';
 
-// --- UTILS ---22
+// --- UTILS ---
 const getTodayISO = () => {
   const tzOffset = (new Date()).getTimezoneOffset() * 60000;
   return (new Date(Date.now() - tzOffset)).toISOString().split('T')[0];
