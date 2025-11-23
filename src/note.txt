@@ -1,6 +1,6 @@
 lệnh tải lại 
 git add .
-git commit -m "vesion11" 
+git commit -m "vesion112" 
 git push
 web dùng 
 https://vercel.com/
