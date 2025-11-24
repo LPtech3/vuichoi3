@@ -5,7 +5,8 @@ import {
   CheckCircle2, Clock, Send, Loader2,
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
-  CalendarClock, AlertTriangle, AlertCircle, ExternalLink
+  CalendarClock, AlertTriangle, AlertCircle, ExternalLink,
+  Edit3, ArrowUp, ArrowDown, Copy, Key
 } from 'lucide-react';
 
 // --- UTILS ---
@@ -19,12 +20,17 @@ const showNotify = (setter, msg, type = 'success') => {
   setTimeout(() => setter({ msg: '', type: '' }), 3000);
 };
 
-// Hàm lấy vị trí GPS (Promise)
+// Hàm lấy vị trí GPS (Cải thiện timeout để tránh treo)
 const getCurrentLocation = () => {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error("Trình duyệt không hỗ trợ định vị."));
     } else {
+      const options = {
+        enableHighAccuracy: true,
+        timeout: 10000, // 10 giây timeout
+        maximumAge: 0
+      };
       navigator.geolocation.getCurrentPosition(
         (position) => {
           resolve({
@@ -33,8 +39,13 @@ const getCurrentLocation = () => {
           });
         },
         (error) => {
-          reject(new Error("Không thể lấy vị trí. Hãy bật GPS."));
-        }
+          let msg = "Không thể lấy vị trí.";
+          if (error.code === 1) msg = "Bạn đã chặn quyền truy cập vị trí.";
+          else if (error.code === 2) msg = "Không bắt được sóng GPS.";
+          else if (error.code === 3) msg = "Hết thời gian chờ GPS (Timeout).";
+          reject(new Error(msg));
+        },
+        options
       );
     }
   });
@@ -66,11 +77,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState({ msg: '', type: '' });
   const [isSidebarOpen, setSidebarOpen] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [showChangePass, setShowChangePass] = useState(false); // Modal đổi pass
 
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => clearInterval(timer);
+    // Auto refresh timer if needed
   }, []);
 
   // --- LOGIC ---
@@ -100,6 +110,21 @@ export default function App() {
     }
   };
 
+  const handleChangePassword = async (newPass) => {
+    if(!newPass || newPass.length < 3) return showNotify(setNotification, "Mật khẩu quá ngắn", "error");
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('app_users').update({ password: newPass }).eq('id', user.id);
+      if(error) throw error;
+      showNotify(setNotification, "Đổi mật khẩu thành công!");
+      setShowChangePass(false);
+    } catch (err) {
+      showNotify(setNotification, "Lỗi đổi mật khẩu", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const fetchTasksConfig = async (role) => {
     const { data } = await supabase.from('task_definitions').select('*').eq('role', role).order('sort_order');
     if(data) setTasksConfig(data);
@@ -117,7 +142,7 @@ export default function App() {
     setUsersList(uData || []);
     const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
     setRolesList(rData || []);
-    const { data: tData } = await supabase.from('task_definitions').select('*').order('sort_order');
+    const { data: tData } = await supabase.from('task_definitions').select('*').order('sort_order', { ascending: true });
     setTasksConfig(tData || []);
     const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
     const reportMap = {};
@@ -134,6 +159,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
+      {/* Change Pass Modal */}
+      {showChangePass && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+           <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl">
+              <h3 className="font-bold text-lg mb-4">Đổi mật khẩu mới</h3>
+              <input type="password" id="newPassInput" className="w-full border p-3 rounded-lg mb-4" placeholder="Nhập mật khẩu mới..." />
+              <div className="flex justify-end gap-3">
+                 <button onClick={() => setShowChangePass(false)} className="px-4 py-2 text-slate-500 font-medium">Hủy</button>
+                 <button onClick={() => handleChangePassword(document.getElementById('newPassInput').value)} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Lưu</button>
+              </div>
+           </div>
+        </div>
+      )}
+
       {notification.msg && (
         <div className={`fixed top-4 right-4 z-[100] px-5 py-3 rounded-lg shadow-xl border flex items-center gap-3 animate-bounce-short ${notification.type === 'error' ? 'bg-white border-red-100 text-red-600' : 'bg-white border-emerald-100 text-emerald-600'}`}>
           {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle2 size={20} />}
@@ -160,7 +199,12 @@ export default function App() {
             </button>
           </div>
           <div className={`absolute lg:static w-full bg-white border-b lg:border-none border-slate-200 p-4 transition-all duration-300 z-30 ${isSidebarOpen ? 'top-20 opacity-100 visible shadow-xl' : 'top-[-400px] opacity-0 invisible lg:opacity-100 lg:visible'}`}>
-             <div className="mt-auto pt-4 lg:absolute lg:bottom-0 lg:w-full lg:left-0 lg:p-4">
+             <div className="mt-4 space-y-2">
+                <button onClick={() => setShowChangePass(true)} className="w-full flex items-center gap-3 p-3 rounded-xl text-slate-600 hover:bg-slate-50 transition-all font-medium">
+                   <Key size={18} /> Đổi mật khẩu
+                </button>
+             </div>
+             <div className="mt-auto pt-4 lg:absolute lg:bottom-0 lg:w-full lg:left-0 lg:p-4 border-t border-slate-100">
                 <button onClick={() => { setUser(null); setChecklistData({}); }} className="w-full flex items-center justify-center gap-2 p-3 rounded-xl text-rose-600 bg-rose-50 hover:bg-rose-100 transition-all font-medium">
                   <LogOut size={18} /> Đăng xuất
                 </button>
@@ -197,12 +241,12 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS (Cập nhật Check-in GPS & Camera)
+// STAFF COMPONENTS (Đã fix lỗi treo màn hình GPS)
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
     const [loadingSend, setLoadingSend] = useState(null);
-    const [attLoading, setAttLoading] = useState(false); // Loading cho checkin
+    const [attLoading, setAttLoading] = useState(false);
 
     useEffect(() => { checkAttendanceStatus(); }, []);
 
@@ -219,19 +263,17 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
       }
     };
 
-    // HÀM XỬ LÝ CHECK-IN/OUT MỚI
     const handleAttendanceCapture = async (e, type) => {
       const file = e.target.files[0];
       if (!file) return;
 
       setAttLoading(true);
-      setNotify("Đang lấy định vị và tải ảnh...", "info");
+      setNotify("Đang định vị và tải ảnh (Vui lòng chờ)...", "info");
 
       try {
-         // 1. Lấy vị trí GPS
+         // Lấy vị trí GPS (đã có timeout)
          const location = await getCurrentLocation();
 
-         // 2. Upload ảnh selfie
          const fileExt = file.name.split('.').pop();
          const fileName = `attendance/${user.username}_${type}_${Date.now()}.${fileExt}`;
 
@@ -240,7 +282,6 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 
          const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(fileName);
 
-         // 3. Lưu vào DB
          const { error } = await supabase.from('time_logs').insert({
              user_id: user.id,
              action_type: type,
@@ -256,9 +297,9 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 
       } catch (err) {
          console.error(err);
-         setNotify(err.message || "Lỗi chấm công", "error");
+         setNotify(err.message || "Lỗi. Hãy kiểm tra GPS và mạng.", "error");
       } finally {
-         setAttLoading(false);
+         setAttLoading(false); // Đảm bảo luôn tắt loading
       }
     };
 
@@ -315,7 +356,7 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 
     return (
       <div className="space-y-6">
-        {/* THANH TIẾN ĐỘ */}
+        {/* Progress Bar */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
            <div className="flex justify-between items-end mb-2">
               <span className="font-bold text-slate-700">Tiến độ hôm nay</span>
@@ -327,50 +368,25 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
            <p className="text-xs text-slate-400 mt-2 text-right">{completedTasks}/{totalTasks} công việc đã gửi</p>
         </div>
 
-        {/* CHECK IN OUT WITH CAMERA */}
+        {/* Check In/Out */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
-           <div><h2 className="text-xl font-bold text-slate-800">Chấm công</h2><p className="text-slate-500 text-sm">Chụp ảnh khuôn mặt để vào/ra ca</p></div>
+           <div><h2 className="text-xl font-bold text-slate-800">Chấm công</h2><p className="text-slate-500 text-sm">Chụp ảnh để vào/ra ca</p></div>
 
            {attLoading ? (
-             <div className="flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl">
-               <Loader2 className="animate-spin"/> Đang xử lý...
+             <div className="flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl animate-pulse">
+               <Loader2 className="animate-spin"/> Đang xử lý GPS...
              </div>
            ) : (
              <div className="flex gap-3">
-                {/* NÚT CHECK IN */}
                 <div className="relative">
-                   <input
-                     type="file"
-                     accept="image/*"
-                     capture="user" // Mở camera trước
-                     id="att-in"
-                     className="hidden"
-                     disabled={!!attendance.in}
-                     onChange={(e) => handleAttendanceCapture(e, 'check_in')}
-                   />
-                   <label
-                     htmlFor="att-in"
-                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.in ? 'bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/30'}`}
-                   >
+                   <input type="file" accept="image/*" capture="user" id="att-in" className="hidden" disabled={!!attendance.in} onChange={(e) => handleAttendanceCapture(e, 'check_in')} />
+                   <label htmlFor="att-in" className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.in ? 'bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/30'}`}>
                      <MapPin size={18} /> {attendance.in ? `Vào: ${attendance.in}` : 'Check In'}
                    </label>
                 </div>
-
-                {/* NÚT CHECK OUT */}
                 <div className="relative">
-                   <input
-                     type="file"
-                     accept="image/*"
-                     capture="user"
-                     id="att-out"
-                     className="hidden"
-                     disabled={!attendance.in || !!attendance.out}
-                     onChange={(e) => handleAttendanceCapture(e, 'check_out')}
-                   />
-                   <label
-                     htmlFor="att-out"
-                     className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.out ? 'bg-slate-100 text-slate-400 pointer-events-none' : (!attendance.in ? 'opacity-50 cursor-not-allowed pointer-events-none' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100')}`}
-                   >
+                   <input type="file" accept="image/*" capture="user" id="att-out" className="hidden" disabled={!attendance.in || !!attendance.out} onChange={(e) => handleAttendanceCapture(e, 'check_out')} />
+                   <label htmlFor="att-out" className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.out ? 'bg-slate-100 text-slate-400 pointer-events-none' : (!attendance.in ? 'opacity-50 cursor-not-allowed pointer-events-none' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100')}`}>
                      <LogOut size={18} /> {attendance.out ? `Ra: ${attendance.out}` : 'Check Out'}
                    </label>
                 </div>
@@ -384,12 +400,12 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
             const isDone = item.done; const isSent = item.sent;
             const isLate = checkIsLate(task.time_label, task.late_buffer, isDone);
             return (
-               <div key={task.id} className={`bg-white p-4 rounded-xl border-2 transition-all ${isSent ? 'border-emerald-100 bg-emerald-50/20' : isLate ? 'border-red-500 bg-red-50 shadow-red-100 shadow-lg animate-pulse' : isDone ? 'border-blue-100' : 'border-transparent shadow-sm'}`}>
+               <div key={task.id} className={`bg-white p-4 rounded-xl border-2 transition-all ${isSent ? 'border-emerald-100 bg-emerald-50/20' : isLate ? 'border-red-500 bg-red-50 shadow-red-100 shadow-lg' : isDone ? 'border-blue-100' : 'border-transparent shadow-sm'}`}>
                   <div className="flex flex-col md:flex-row md:items-center gap-4">
                      <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => !isSent && handleTaskAction(task.id, 'toggle')}>
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isDone ? (isSent ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600') : (isLate ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-300')}`}>{isLate && !isDone ? <AlertTriangle size={20}/> : <CheckCircle2 size={20}/>}</div>
                         <div>
-                           <div className="flex items-center gap-2 text-xs mb-1"><span className={`font-bold px-2 py-0.5 rounded ${isLate && !isDone ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{task.time_label} {isLate && !isDone ? '(QUÁ GIỜ)' : ''}</span>{item.time && <span className="text-blue-600 font-medium"><Clock size={10} className="inline mr-1"/>{item.time}</span>}</div>
+                           <div className="flex items-center gap-2 text-xs mb-1"><span className={`font-bold px-2 py-0.5 rounded ${isLate && !isDone ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'}`}>{task.time_label} {isLate && !isDone ? '(TRỄ)' : ''}</span>{item.time && <span className="text-blue-600 font-medium"><Clock size={10} className="inline mr-1"/>{item.time}</span>}</div>
                            <h3 className={`font-semibold ${isLate && !isDone ? 'text-red-700' : 'text-slate-800'}`}>{task.title}</h3>
                         </div>
                      </div>
@@ -425,14 +441,13 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
       {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
-      {tab === 'roles' && <AdminRoleManager roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
+      {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
     </div>
   );
 };
 
-// --- BÁO CÁO CHẤM CÔNG (Có Ảnh & Map) ---
+// --- CÁC COMPONENT CON CỦA ADMIN ---
 const AdminTimesheet = ({ timeLogs, users }) => {
-    // Flat map check-in/out để hiển thị chi tiết (Dễ xem ảnh hơn)
     return (
         <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
              <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -472,7 +487,7 @@ const AdminTimesheet = ({ timeLogs, users }) => {
                             </td>
                             <td className="p-4">
                                 {log.lat && log.lng ? (
-                                    <a href={`https://www.google.com/maps/search/?api=1&query=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
+                                    <a href={`http://maps.google.com/maps?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
                                         <MapPin size={14}/> Xem bản đồ
                                     </a>
                                 ) : <span className="text-xs text-slate-300">Không có GPS</span>}
@@ -486,7 +501,6 @@ const AdminTimesheet = ({ timeLogs, users }) => {
     )
 }
 
-// (Các component Admin khác & Login giữ nguyên để code gọn, chức năng không đổi)
 const AdminReports = ({ reports, allTasks, roles }) => {
    const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(allTasks.map(t => t.role))];
    return (
@@ -509,7 +523,8 @@ const AdminReports = ({ reports, allTasks, roles }) => {
                    {roleTasks.map(task => {
                       const item = roleReport[task.id];
                       const isLate = checkIsLate(task.time_label, task.late_buffer, item?.sent);
-                      if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title}</span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
+                      // Hiển thị nội dung công việc giống với bên nhân viên để đồng nhất
+                      if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
                       return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
                    })}
                 </div>
@@ -519,43 +534,230 @@ const AdminReports = ({ reports, allTasks, roles }) => {
      </div>
    )
 }
+
 const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
-  const [editing, setEditing] = useState({ role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
-  useEffect(() => { if(roles.length > 0 && !editing.role) setEditing(prev => ({...prev, role: roles[0].code})); }, [roles]);
-  const handleAddTask = async () => {
+  const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
+
+  useEffect(() => {
+      if(roles.length > 0 && !editing.role) setEditing(prev => ({...prev, role: roles[0].code}));
+  }, [roles]);
+
+  const resetForm = () => setEditing({ id: null, role: roles[0]?.code || '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
+
+  const handleSaveTask = async () => {
      if(!editing.title) return;
-     const roleToSave = editing.role || (roles[0]?.code);
-     const { error } = await supabase.from('task_definitions').insert({...editing, role: roleToSave});
-     if(error) setNotify("Lỗi tạo việc", "error"); else { setNotify("Đã tạo công việc mới"); onRefresh(); }
+     const payload = {
+         role: editing.role, title: editing.title, time_label: editing.time_label,
+         late_buffer: editing.late_buffer, require_input: editing.require_input,
+         require_image: editing.require_image
+     };
+
+     if (editing.id) {
+         // Update
+         const { error } = await supabase.from('task_definitions').update(payload).eq('id', editing.id);
+         if(error) setNotify("Lỗi cập nhật", "error"); else { setNotify("Đã cập nhật"); onRefresh(); resetForm(); }
+     } else {
+         // Create new (get max order first)
+         const maxOrder = allTasks.filter(t => t.role === editing.role).length + 1;
+         const { error } = await supabase.from('task_definitions').insert({...payload, sort_order: maxOrder});
+         if(error) setNotify("Lỗi tạo việc", "error"); else { setNotify("Đã thêm công việc"); onRefresh(); resetForm(); }
+     }
   };
+
+  const handleEdit = (task) => {
+      setEditing({ ...task });
+  };
+
   const handleDeleteTask = async (id) => { if(!window.confirm("Xóa việc này?")) return; const { error } = await supabase.from('task_definitions').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
+
+  // Logic đổi vị trí (Swap Order)
+  const handleMove = async (task, direction) => {
+      const roleTasks = allTasks.filter(t => t.role === task.role).sort((a,b) => a.sort_order - b.sort_order);
+      const index = roleTasks.findIndex(t => t.id === task.id);
+      if ((direction === 'up' && index === 0) || (direction === 'down' && index === roleTasks.length - 1)) return;
+
+      const swapTask = direction === 'up' ? roleTasks[index - 1] : roleTasks[index + 1];
+
+      // Swap order values
+      await supabase.from('task_definitions').update({ sort_order: swapTask.sort_order }).eq('id', task.id);
+      await supabase.from('task_definitions').update({ sort_order: task.sort_order }).eq('id', swapTask.id);
+
+      onRefresh();
+  };
+
   return (
      <div className="space-y-6">
         <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 grid grid-cols-2 md:grid-cols-6 gap-3">
            <div className="col-span-2 md:col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Khu vực</label><select className="w-full p-2 rounded border text-sm" value={editing.role} onChange={e => setEditing({...editing, role: e.target.value})}>{roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select></div>
            <div className="col-span-2 md:col-span-2"><label className="text-xs font-bold text-indigo-800 block mb-1">Tên công việc</label><input className="w-full p-2 rounded border text-sm" placeholder="VD: Dọn hồ cá" value={editing.title} onChange={e => setEditing({...editing, title: e.target.value})}/></div>
-           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Giờ</label><input className="w-full p-2 rounded border text-sm" placeholder="15:30" value={editing.time_label} onChange={e => setEditing({...editing, time_label: e.target.value})}/></div>
-           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Trễ (p)</label><input type="number" className="w-full p-2 rounded border text-sm" placeholder="15" value={editing.late_buffer} onChange={e => setEditing({...editing, late_buffer: parseInt(e.target.value)||0})}/></div>
-           <div className="col-span-2 md:col-span-1 flex flex-col justify-center gap-2"><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_input} onChange={e => setEditing({...editing, require_input: e.target.checked})} /> Nhập số?</label><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_image} onChange={e => setEditing({...editing, require_image: e.target.checked})} /> Chụp ảnh?</label></div>
-           <div className="col-span-2 flex items-end"><button onClick={handleAddTask} className="w-full bg-indigo-600 text-white p-2 rounded font-bold hover:bg-indigo-700 text-sm">Thêm</button></div>
+           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Giờ (VD: 15:30)</label><input className="w-full p-2 rounded border text-sm" placeholder="15:30" value={editing.time_label} onChange={e => setEditing({...editing, time_label: e.target.value})}/></div>
+           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Cho trễ (phút)</label><input type="number" className="w-full p-2 rounded border text-sm" placeholder="15" value={editing.late_buffer} onChange={e => setEditing({...editing, late_buffer: parseInt(e.target.value)||0})}/></div>
+           <div className="col-span-2 md:col-span-1 flex flex-col justify-center gap-2"><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_input} onChange={e => setEditing({...editing, require_input: e.target.checked})} /> Nhập số liệu?</label><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_image} onChange={e => setEditing({...editing, require_image: e.target.checked})} /> Chụp ảnh?</label></div>
+           <div className="col-span-2 flex items-end gap-2">
+               {editing.id && <button onClick={resetForm} className="flex-1 bg-slate-200 text-slate-600 p-2 rounded font-bold text-sm">Hủy</button>}
+               <button onClick={handleSaveTask} className="flex-1 bg-indigo-600 text-white p-2 rounded font-bold hover:bg-indigo-700 text-sm">{editing.id ? 'Cập nhật' : 'Thêm mới'}</button>
+           </div>
         </div>
-        <div className="bg-white rounded-xl shadow border border-slate-200">{allTasks.map(t => { const roleName = roles.find(r => r.code === t.role)?.name || t.role; return (<div key={t.id} className="p-3 border-b border-slate-50 last:border-0 flex items-center justify-between hover:bg-slate-50"><div className="flex items-center gap-3"><span className="text-xs font-bold bg-slate-100 text-slate-500 w-24 text-center py-1 rounded truncate">{roleName}</span><div><p className="font-bold text-sm text-slate-700">{t.title}</p><p className="text-xs text-slate-400">{t.time_label} (+{t.late_buffer}p) | {t.require_input?'Nhập số':''} {t.require_image?'Có ảnh':''}</p></div></div><button onClick={() => handleDeleteTask(t.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16}/></button></div>)})}</div>
+
+        <div className="space-y-4">
+            {roles.map(role => {
+                const tasks = allTasks.filter(t => t.role === role.code);
+                if(tasks.length === 0) return null;
+                return (
+                    <div key={role.code} className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                        <div className="bg-slate-50 p-3 border-b border-slate-100 font-bold text-slate-700 flex justify-between">{role.name} <span className="text-xs font-normal bg-white border px-2 rounded flex items-center">{role.code}</span></div>
+                        {tasks.map((t, idx) => (
+                            <div key={t.id} className="p-3 border-b border-slate-50 last:border-0 flex items-center justify-between hover:bg-slate-50">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex flex-col gap-1">
+                                        <button onClick={() => handleMove(t, 'up')} disabled={idx === 0} className="text-slate-300 hover:text-blue-600 disabled:opacity-0"><ArrowUp size={14}/></button>
+                                        <button onClick={() => handleMove(t, 'down')} disabled={idx === tasks.length - 1} className="text-slate-300 hover:text-blue-600 disabled:opacity-0"><ArrowDown size={14}/></button>
+                                    </div>
+                                    <div>
+                                        <p className="font-bold text-sm text-slate-700">{t.title}</p>
+                                        <p className="text-xs text-slate-400">{t.time_label} (+{t.late_buffer}p) {t.require_input && '| Nhập số'} {t.require_image && '| Chụp ảnh'}</p>
+                                    </div>
+                                </div>
+                                <div className="flex gap-1">
+                                    <button onClick={() => handleEdit(t)} className="text-blue-400 hover:text-blue-600 p-2"><Edit3 size={16}/></button>
+                                    <button onClick={() => handleDeleteTask(t.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={16}/></button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )
+            })}
+        </div>
      </div>
   )
 }
-const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
+
+const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
     const [newRole, setNewRole] = useState({ code: '', name: '' });
+    const [cloneData, setCloneData] = useState({ from: '', toCode: '', toName: '' });
+
     const handleAddRole = async () => { if(!newRole.code || !newRole.name) return setNotify("Vui lòng nhập", "error"); const cleanCode = newRole.code.toLowerCase().replace(/\s/g, '_'); const { error } = await supabase.from('job_roles').insert({ code: cleanCode, name: newRole.name }); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); setNewRole({ code: '', name: '' }); onRefresh(); } };
+
     const handleDeleteRole = async (code) => { if(code === 'admin') return; if(!window.confirm(`Xóa ${code}?`)) return; const { error } = await supabase.from('job_roles').delete().eq('code', code); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-    return (<div className="space-y-6"><div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex gap-3"><input className="p-2 rounded border border-amber-200 text-sm flex-1" placeholder="Mã (vd: be_boi)" value={newRole.code} onChange={e => setNewRole({...newRole, code: e.target.value})}/><input className="p-2 rounded border border-amber-200 text-sm flex-[2]" placeholder="Tên (vd: Bể Bơi)" value={newRole.name} onChange={e => setNewRole({...newRole, name: e.target.value})}/><button onClick={handleAddRole} className="bg-amber-600 text-white px-4 rounded font-bold hover:bg-amber-700 text-sm">Thêm</button></div><div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden"><table className="w-full text-sm text-left"><tbody className="divide-y divide-slate-100">{roles.map(r => (<tr key={r.code} className="hover:bg-slate-50"><td className="p-4 font-mono text-slate-500">{r.code}</td><td className="p-4 font-bold text-slate-700">{r.name}</td><td className="p-4 text-right"><button onClick={() => handleDeleteRole(r.code)} className="text-red-400 p-2"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div></div>)
+
+    const handleCloneRole = async () => {
+        if (!cloneData.from || !cloneData.toCode || !cloneData.toName) return setNotify("Thiếu thông tin nhân bản", "error");
+        const cleanToCode = cloneData.toCode.toLowerCase().replace(/\s/g, '_');
+
+        // 1. Tạo role mới
+        const { error: rErr } = await supabase.from('job_roles').insert({ code: cleanToCode, name: cloneData.toName });
+        if (rErr) return setNotify("Lỗi tạo Role: " + rErr.message, "error");
+
+        // 2. Lấy tasks cũ
+        const sourceTasks = allTasks.filter(t => t.role === cloneData.from);
+        if (sourceTasks.length === 0) return setNotify("Khu vực nguồn không có việc nào", "info");
+
+        // 3. Insert tasks mới
+        const newTasks = sourceTasks.map(t => ({
+            role: cleanToCode,
+            title: t.title,
+            time_label: t.time_label,
+            late_buffer: t.late_buffer,
+            require_input: t.require_input,
+            require_image: t.require_image,
+            sort_order: t.sort_order
+        }));
+
+        const { error: tErr } = await supabase.from('task_definitions').insert(newTasks);
+        if (tErr) setNotify("Lỗi copy việc: " + tErr.message, "error");
+        else { setNotify("Đã nhân bản thành công!"); onRefresh(); setCloneData({ from: '', toCode: '', toName: '' }); }
+    };
+
+    return (
+        <div className="space-y-8">
+            {/* THÊM MỚI */}
+            <div>
+                <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Thêm Khu Vực Mới</h3>
+                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex gap-3">
+                    <input className="p-2 rounded border border-amber-200 text-sm flex-1" placeholder="Mã (vd: be_boi)" value={newRole.code} onChange={e => setNewRole({...newRole, code: e.target.value})}/>
+                    <input className="p-2 rounded border border-amber-200 text-sm flex-[2]" placeholder="Tên (vd: Bể Bơi)" value={newRole.name} onChange={e => setNewRole({...newRole, name: e.target.value})}/>
+                    <button onClick={handleAddRole} className="bg-amber-600 text-white px-4 rounded font-bold hover:bg-amber-700 text-sm">Thêm</button>
+                </div>
+            </div>
+
+            {/* NHÂN BẢN */}
+            <div>
+                 <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Copy Cấu Hình (Nhân Bản)</h3>
+                 <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <select className="p-2 rounded border border-blue-200 text-sm" value={cloneData.from} onChange={e => setCloneData({...cloneData, from: e.target.value})}>
+                        <option value="">-- Sao chép từ --</option>
+                        {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
+                    </select>
+                    <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Mã Mới (vd: be_boi_2)" value={cloneData.toCode} onChange={e => setCloneData({...cloneData, toCode: e.target.value})}/>
+                    <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Tên Mới (vd: Bể Bơi 2)" value={cloneData.toName} onChange={e => setCloneData({...cloneData, toName: e.target.value})}/>
+                    <button onClick={handleCloneRole} className="bg-blue-600 text-white px-4 rounded font-bold hover:bg-blue-700 text-sm flex items-center justify-center gap-2"><Copy size={16}/> Nhân bản</button>
+                 </div>
+            </div>
+
+            {/* DANH SÁCH */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                <table className="w-full text-sm text-left">
+                    <tbody className="divide-y divide-slate-100">
+                        {roles.map(r => (
+                            <tr key={r.code} className="hover:bg-slate-50">
+                                <td className="p-4 font-mono text-slate-500">{r.code}</td>
+                                <td className="p-4 font-bold text-slate-700">{r.name}</td>
+                                <td className="p-4 text-right"><button onClick={() => handleDeleteRole(r.code)} className="text-red-400 p-2"><Trash2 size={16}/></button></td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    )
 }
+
 const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '' });
   useEffect(() => { if(roles.length > 0 && !newUser.role) setNewUser(prev => ({...prev, role: roles[0].code})); }, [roles]);
-  const handleAddUser = async () => { if(!newUser.username || !newUser.password) return setNotify("Thiếu thông tin", "error"); const roleToSave = newUser.role || 'nam_np'; const { error } = await supabase.from('app_users').insert({...newUser, role: roleToSave}); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); onRefresh(); } };
+
+  const handleAddUser = async () => { if(!newUser.username || !newUser.password) return setNotify("Thiếu thông tin", "error"); const roleToSave = newUser.role || 'staff'; const { error } = await supabase.from('app_users').insert({...newUser, role: roleToSave}); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); onRefresh(); } };
   const handleDeleteUser = async (id) => { if(!window.confirm("Xóa user?")) return; const { error } = await supabase.from('app_users').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-  return (<div className="space-y-6"><div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col md:flex-row gap-3"><input className="p-2 rounded border border-blue-200 text-sm" placeholder="User" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})}/><input className="p-2 rounded border border-blue-200 text-sm" placeholder="Pass" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})}/><input className="p-2 rounded border border-blue-200 text-sm flex-1" placeholder="Họ Tên" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})}/><select className="p-2 rounded border border-blue-200 text-sm" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}><option value="admin">Quản lý</option>{roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select><button onClick={handleAddUser} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 text-sm">Thêm</button></div><div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden"><table className="w-full text-sm text-left"><tbody className="divide-y divide-slate-100">{users.map(u => (<tr key={u.id} className="hover:bg-slate-50"><td className="p-4 font-bold text-slate-700">{u.name}</td><td className="p-4 text-slate-500">{u.username}</td><td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs">{u.role}</span></td><td className="p-4 text-right"><button onClick={() => handleDeleteUser(u.id)} className="text-red-500 p-2"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div></div>)
+
+  return (
+    <div className="space-y-6">
+        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col md:flex-row gap-3">
+            <input className="p-2 rounded border border-blue-200 text-sm" placeholder="User" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})}/>
+            <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Pass" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})}/>
+            <input className="p-2 rounded border border-blue-200 text-sm flex-1" placeholder="Họ Tên" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})}/>
+            <select className="p-2 rounded border border-blue-200 text-sm" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
+                <option value="admin">Quản lý (Admin)</option>
+                {roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select>
+            <button onClick={handleAddUser} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 text-sm">Thêm</button>
+        </div>
+        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+            <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
+                    <tr>
+                        <th className="p-4">Họ Tên</th>
+                        <th className="p-4">Username</th>
+                        <th className="p-4 text-red-400">Password</th> {/* Đã hiển thị password */}
+                        <th className="p-4">Vai trò</th>
+                        <th className="p-4 text-right">Xóa</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {users.map(u => (
+                        <tr key={u.id} className="hover:bg-slate-50">
+                            <td className="p-4 font-bold text-slate-700">{u.name}</td>
+                            <td className="p-4 text-slate-500">{u.username}</td>
+                            <td className="p-4 text-red-500 font-mono">{u.password}</td>
+                            <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs">{u.role}</span></td>
+                            <td className="p-4 text-right"><button onClick={() => handleDeleteUser(u.id)} className="text-red-500 p-2"><Trash2 size={16}/></button></td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    </div>
+  )
 }
+
 const ModernLogin = ({ loginForm, setLoginForm, handleLogin, loading, notification }) => (
   <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4"><div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100"><div className="text-center mb-8"><div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white mb-4 shadow-lg shadow-blue-500/30"><ShieldCheck size={32}/></div><h1 className="text-2xl font-bold text-slate-800">Đăng Nhập Hệ Thống</h1></div><div className="space-y-4"><div className="relative"><User className="absolute left-4 top-3.5 text-slate-400" size={20}/><input type="text" placeholder="Tên đăng nhập" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})}/></div><div className="relative"><Lock className="absolute left-4 top-3.5 text-slate-400" size={20}/><input type="password" placeholder="Mật khẩu" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleLogin()}/></div>{notification.msg && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{notification.msg}</div>}<button onClick={handleLogin} disabled={loading} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 flex justify-center">{loading ? <Loader2 className="animate-spin"/> : 'Vào ca làm việc'}</button></div></div></div>
 );
