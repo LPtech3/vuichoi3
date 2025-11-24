@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle, ExternalLink,
-  Edit3, ArrowUp, ArrowDown, Copy, Key, Save, XCircle
+  Edit3, ArrowUp, ArrowDown, Copy, Key, Save, XCircle, Home
 } from 'lucide-react';
 
 // --- STYLES CHO HIỆU ỨNG NHẤP NHÁY ---
@@ -27,803 +27,1316 @@ const CustomStyles = () => (
 );
 
 // --- UTILS ---
-const getTodayISO = () => {
-  const tzOffset = (new Date()).getTimezoneOffset() * 60000;
-  return (new Date(Date.now() - tzOffset)).toISOString().split('T')[0];
+const getTodayISO = () => new Date().toISOString().split('T')[0];
+
+const getCurrentTime = () => {
+    const now = new Date();
+    return now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
 };
 
-const showNotify = (setter, msg, type = 'success') => {
-  setter({ msg, type });
-  setTimeout(() => setter({ msg: '', type: '' }), 3000);
+const checkIsLate = (taskTime, lateBuffer, sentTime) => {
+    if (sentTime) return false; // Nếu đã gửi thì không tính trễ
+    if (!taskTime) return false;
+
+    const [taskH, taskM] = taskTime.split(':').map(Number);
+    const now = new Date();
+    const taskDate = new Date();
+    taskDate.setHours(taskH, taskM, 0, 0);
+
+    const lateLimit = new Date(taskDate.getTime() + lateBuffer * 60000); // Thêm buffer (phút)
+
+    return now > lateLimit;
 };
-
-// Hàm lấy vị trí GPS (Cải thiện timeout để tránh treo)
-const getCurrentLocation = () => {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("Trình duyệt không hỗ trợ định vị."));
-    } else {
-      const options = {
-        enableHighAccuracy: true,
-        timeout: 10000, // 10 giây timeout
-        maximumAge: 0
-      };
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        (error) => {
-          let msg = "Không thể lấy vị trí.";
-          if (error.code === 1) msg = "Bạn đã chặn quyền truy cập vị trí.";
-          else if (error.code === 2) msg = "Không bắt được sóng GPS.";
-          else if (error.code === 3) msg = "Hết thời gian chờ GPS (Timeout).";
-          reject(new Error(msg));
-        },
-        options
-      );
-    }
-  });
-};
-
-const checkIsLate = (timeLabel, bufferMins = 0, isDone = false) => {
-  if (isDone || !timeLabel || !timeLabel.includes(':')) return false;
-  const now = new Date();
-  const [h, m] = timeLabel.split(':').map(Number);
-  const taskTime = new Date();
-  taskTime.setHours(h, m, 0, 0);
-  // Nếu bufferMins chưa có giá trị, mặc định là 0
-  const buffer = parseInt(bufferMins) || 0;
-  const deadline = new Date(taskTime.getTime() + (buffer * 60000));
-  return now > deadline;
-};
-
-// --- COMPONENT CHÍNH ---
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-
-  // Data States
-  const [tasksConfig, setTasksConfig] = useState([]);
-  const [checklistData, setChecklistData] = useState({});
-  const [usersList, setUsersList] = useState([]);
-  const [rolesList, setRolesList] = useState([]);
-  const [timeLogs, setTimeLogs] = useState([]);
-
-  // UI States
-  const [loading, setLoading] = useState(false);
-  const [notification, setNotification] = useState({ msg: '', type: '' });
-  const [isSidebarOpen, setSidebarOpen] = useState(false);
-  const [showChangePass, setShowChangePass] = useState(false);
-
-  useEffect(() => {
-    // Auto refresh timer if needed
-  }, []);
-
-  // --- LOGIC ---
-  const handleLogin = async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('app_users')
-        .select('*')
-        .eq('username', loginForm.username)
-        .eq('password', loginForm.password)
-        .single();
-
-      if (error || !data) throw new Error("Sai thông tin đăng nhập");
-
-      setUser(data);
-      if(data.role !== 'admin') {
-         fetchTasksConfig(data.role);
-         fetchTodayReport(data.role);
-      } else {
-         fetchAllDataAdmin();
-      }
-    } catch (err) {
-      showNotify(setNotification, err.message, "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleChangePassword = async (newPass) => {
-    if(!newPass || newPass.length < 3) return showNotify(setNotification, "Mật khẩu quá ngắn", "error");
-    setLoading(true);
-    try {
-      const { error } = await supabase.from('app_users').update({ password: newPass }).eq('id', user.id);
-      if(error) throw error;
-      showNotify(setNotification, "Đổi mật khẩu thành công!");
-      setShowChangePass(false);
-    } catch (err) {
-      showNotify(setNotification, "Lỗi đổi mật khẩu", "error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const fetchTasksConfig = async (role) => {
-    const { data } = await supabase.from('task_definitions').select('*').eq('role', role).order('sort_order', { ascending: true });
-    if(data) setTasksConfig(data);
-  };
-
-  const fetchTodayReport = async (role) => {
-    const today = getTodayISO();
-    const { data } = await supabase.from('checklist_logs').select('data').eq('report_date', today).eq('role', role).single();
-    if (data) setChecklistData(prev => ({...prev, [role]: data.data || {}}));
-  };
-
-  const fetchAllDataAdmin = async () => {
-    const today = getTodayISO();
-    // Fetch users
-    const { data: uData } = await supabase.from('app_users').select('*').order('created_at');
-    setUsersList(uData || []);
-    // Fetch roles
-    const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
-    setRolesList(rData || []);
-    // Fetch tasks sorted by sort_order
-    const { data: tData } = await supabase.from('task_definitions').select('*').order('sort_order', { ascending: true });
-    setTasksConfig(tData || []);
-    // Fetch reports
-    const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
-    const reportMap = {};
-    if(repData) repData.forEach(r => reportMap[r.role] = r.data);
-    setChecklistData(reportMap);
-    // Fetch logs
-    const { data: logData } = await supabase.from('time_logs')
-        .select('*, app_users(name, role)')
-        .eq('report_date', today)
-        .order('log_time', { ascending: false });
-    setTimeLogs(logData || []);
-  };
-
-  if (!user) return <ModernLogin loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} loading={loading} />;
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
-      <CustomStyles />
-      {/* Change Pass Modal */}
-      {showChangePass && (
-        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
-           <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl">
-              <h3 className="font-bold text-lg mb-4">Đổi mật khẩu mới</h3>
-              <input type="password" id="newPassInput" className="w-full border p-3 rounded-lg mb-4" placeholder="Nhập mật khẩu mới..." />
-              <div className="flex justify-end gap-3">
-                 <button onClick={() => setShowChangePass(false)} className="px-4 py-2 text-slate-500 font-medium">Hủy</button>
-                 <button onClick={() => handleChangePassword(document.getElementById('newPassInput').value)} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Lưu</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {notification.msg && (
-        <div className={`fixed top-4 right-4 z-[100] px-5 py-3 rounded-lg shadow-xl border flex items-center gap-3 animate-bounce-short ${notification.type === 'error' ? 'bg-white border-red-100 text-red-600' : 'bg-white border-emerald-100 text-emerald-600'}`}>
-          {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle2 size={20} />}
-          <span className="font-medium">{notification.msg}</span>
-        </div>
-      )}
-
-      <div className="flex flex-col lg:flex-row min-h-screen">
-        <aside className="lg:w-72 bg-white border-r border-slate-200 lg:h-screen lg:sticky lg:top-0 z-40 flex flex-col">
-          <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-lg shadow-lg">
-                {user.name.charAt(0)}
-              </div>
-              <div>
-                <h1 className="font-bold text-slate-800 text-sm lg:text-base">{user.name}</h1>
-                <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase">
-                   {user.role}
-                </span>
-              </div>
-            </div>
-            <button className="lg:hidden p-2 text-slate-500" onClick={() => setSidebarOpen(!isSidebarOpen)}>
-              {isSidebarOpen ? <X /> : <Menu />}
-            </button>
-          </div>
-          <div className={`absolute lg:static w-full bg-white border-b lg:border-none border-slate-200 p-4 transition-all duration-300 z-30 ${isSidebarOpen ? 'top-20 opacity-100 visible shadow-xl' : 'top-[-400px] opacity-0 invisible lg:opacity-100 lg:visible'}`}>
-             <div className="mt-4 space-y-2">
-                <button onClick={() => setShowChangePass(true)} className="w-full flex items-center gap-3 p-3 rounded-xl text-slate-600 hover:bg-slate-50 transition-all font-medium">
-                   <Key size={18} /> Đổi mật khẩu
-                </button>
-             </div>
-             <div className="mt-auto pt-4 lg:absolute lg:bottom-0 lg:w-full lg:left-0 lg:p-4 border-t border-slate-100">
-                <button onClick={() => { setUser(null); setChecklistData({}); }} className="w-full flex items-center justify-center gap-2 p-3 rounded-xl text-rose-600 bg-rose-50 hover:bg-rose-100 transition-all font-medium">
-                  <LogOut size={18} /> Đăng xuất
-                </button>
-             </div>
-          </div>
-        </aside>
-
-        <main className="flex-1 bg-slate-50/50 p-4 lg:p-8 overflow-y-auto">
-          <div className="max-w-6xl mx-auto">
-            {user.role === 'admin' ? (
-              <AdminDashboard
-                users={usersList}
-                roles={rolesList}
-                allTasks={tasksConfig}
-                reports={checklistData}
-                timeLogs={timeLogs}
-                onRefresh={fetchAllDataAdmin}
-                setNotify={(m, t) => showNotify(setNotification, m, t)}
-              />
-            ) : (
-              <StaffDashboard
-                user={user}
-                tasks={tasksConfig}
-                reportData={checklistData[user.role] || {}}
-                onUpdateLocal={(newData) => setChecklistData({...checklistData, [user.role]: newData})}
-                setNotify={(m, t) => showNotify(setNotification, m, t)}
-              />
-            )}
-          </div>
-        </main>
-      </div>
-    </div>
-  );
-}
 
 // ==========================================
-// STAFF COMPONENTS (Đã fix lỗi treo màn hình GPS + Alert nhấp nháy)
+// THÔNG BÁO CHUNG
 // ==========================================
-const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
-    const [attendance, setAttendance] = useState({ in: null, out: null });
-    const [loadingSend, setLoadingSend] = useState(null);
-    const [attLoading, setAttLoading] = useState(false);
+const Notification = ({ notification }) => {
+    if (!notification.msg) return null;
+    const isError = notification.type === 'error';
+    const bgColor = isError ? 'bg-red-100 border-red-400 text-red-700' : 'bg-green-100 border-green-400 text-green-700';
+    const Icon = isError ? AlertCircle : CheckCircle2;
+    return (
+        <div className={`fixed top-4 right-4 z-[100] p-4 rounded-lg shadow-xl border flex items-center gap-3 ${bgColor} animate-bounce-short`}>
+            <Icon size={20} />
+            <span className="font-medium">{notification.msg}</span>
+        </div>
+    );
+};
 
-    useEffect(() => { checkAttendanceStatus(); }, []);
+// ==========================================
+// ĐĂNG NHẬP (MODERN LOGIN)
+// ==========================================
+const ModernLogin = ({ onLogin, setNotify }) => {
+    const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+    const [loading, setLoading] = useState(false);
+    const [notification, setNotification] = useState({ msg: '', type: '' });
 
-    const checkAttendanceStatus = async () => {
-      const today = getTodayISO();
-      const { data } = await supabase.from('time_logs').select('*').eq('user_id', user.id).eq('report_date', today);
-      if (data) {
-        const checkIn = data.find(x => x.action_type === 'check_in');
-        const checkOut = data.find(x => x.action_type === 'check_out');
-        setAttendance({
-          in: checkIn ? new Date(checkIn.log_time).toLocaleTimeString('vi-VN') : null,
-          out: checkOut ? new Date(checkOut.log_time).toLocaleTimeString('vi-VN') : null
-        });
-      }
+    const handleLogin = async () => {
+        if (!loginForm.username || !loginForm.password) {
+            setNotification({ msg: "Vui lòng nhập đầy đủ Tên đăng nhập và Mật khẩu.", type: 'error' });
+            return;
+        }
+
+        setLoading(true);
+        setNotification({ msg: '', type: '' });
+
+        const { data: userData, error } = await supabase
+            .from('app_users')
+            .select('*')
+            .eq('username', loginForm.username)
+            .eq('password', loginForm.password)
+            .single();
+
+        setLoading(false);
+
+        if (error || !userData) {
+            setNotification({ msg: "Sai Tên đăng nhập hoặc Mật khẩu.", type: 'error' });
+            return;
+        }
+
+        onLogin(userData);
+        setNotify("Đăng nhập thành công!", "success");
     };
-
-    const handleAttendanceCapture = async (e, type) => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      setAttLoading(true);
-      setNotify("Đang định vị và tải ảnh (Vui lòng chờ)...", "info");
-
-      try {
-         const location = await getCurrentLocation();
-         const fileExt = file.name.split('.').pop();
-         const fileName = `attendance/${user.username}_${type}_${Date.now()}.${fileExt}`;
-
-         const { error: uploadError } = await supabase.storage.from('task-images').upload(fileName, file);
-         if (uploadError) throw uploadError;
-
-         const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(fileName);
-
-         const { error } = await supabase.from('time_logs').insert({
-             user_id: user.id,
-             action_type: type,
-             report_date: getTodayISO(),
-             image_url: publicUrl,
-             lat: location.lat,
-             lng: location.lng
-         });
-
-         if (error) throw error;
-         setNotify(`Đã ${type === 'check_in' ? 'Check-in' : 'Check-out'} thành công!`);
-         checkAttendanceStatus();
-
-      } catch (err) {
-         console.error(err);
-         setNotify(err.message || "Lỗi. Hãy kiểm tra GPS và mạng.", "error");
-      } finally {
-         setAttLoading(false);
-      }
-    };
-
-    const handleTaskAction = async (taskDefId, actionType, value) => {
-       const currentTaskData = reportData[taskDefId] || {};
-       if (currentTaskData.sent) return;
-       let updatedItem = { ...currentTaskData };
-       if (actionType === 'toggle') {
-          const isDone = !updatedItem.done;
-          updatedItem = { ...updatedItem, done: isDone, time: isDone ? new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : '' };
-       } else if (actionType === 'input') updatedItem.val = value;
-       else if (actionType === 'image') updatedItem.imageUrl = value;
-       onUpdateLocal({ ...reportData, [taskDefId]: updatedItem });
-    };
-
-    const sendSingleTask = async (taskDefId) => {
-       const item = reportData[taskDefId];
-       if(!item || !item.done) return setNotify("Chưa hoàn thành!", "error");
-       const taskDef = tasks.find(t => t.id === taskDefId);
-       if(taskDef?.require_input && !item.val) return setNotify("Thiếu thông tin!", "error");
-       if(taskDef?.require_image && !item.imageUrl) return setNotify("Thiếu ảnh!", "error");
-       setLoadingSend(taskDefId);
-       try {
-         item.sent = true;
-         const newReportData = { ...reportData, [taskDefId]: item };
-         const { error } = await supabase.from('checklist_logs').upsert({ report_date: getTodayISO(), role: user.role, data: newReportData }, { onConflict: 'report_date, role' });
-         if(error) throw error;
-         onUpdateLocal(newReportData);
-         setNotify("Đã gửi báo cáo!");
-       } catch (err) {
-         item.sent = false; onUpdateLocal({ ...reportData, [taskDefId]: item });
-         setNotify("Gửi lỗi", "error");
-       } finally { setLoadingSend(null); }
-    };
-
-    const handleImageUpload = async (e, taskDefId) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      try {
-        setNotify("Đang tải ảnh...", "info");
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${user.username}_${taskDefId}_${Date.now()}.${fileExt}`;
-        const { error } = await supabase.storage.from('task-images').upload(fileName, file);
-        if (error) throw error;
-        const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(fileName);
-        handleTaskAction(taskDefId, 'image', publicUrl);
-        setNotify("Tải ảnh thành công");
-      } catch (error) { setNotify("Lỗi tải ảnh", "error"); }
-    };
-
-    const totalTasks = tasks.length;
-    const completedTasks = tasks.filter(t => reportData[t.id]?.sent).length;
-    const progressPercent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
 
     return (
-      <div className="space-y-6">
-        {/* Progress Bar */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-           <div className="flex justify-between items-end mb-2">
-              <span className="font-bold text-slate-700">Tiến độ hôm nay</span>
-              <span className="text-blue-600 font-bold text-lg">{progressPercent}%</span>
-           </div>
-           <div className="w-full bg-slate-100 rounded-full h-2.5">
-              <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%` }}></div>
-           </div>
-           <p className="text-xs text-slate-400 mt-2 text-right">{completedTasks}/{totalTasks} công việc đã gửi</p>
-        </div>
-
-        {/* Check In/Out */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
-           <div><h2 className="text-xl font-bold text-slate-800">Chấm công</h2><p className="text-slate-500 text-sm">Chụp ảnh để vào/ra ca</p></div>
-
-           {attLoading ? (
-             <div className="flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl animate-pulse">
-               <Loader2 className="animate-spin"/> Đang xử lý GPS...
-             </div>
-           ) : (
-             <div className="flex gap-3">
-                <div className="relative">
-                   <input type="file" accept="image/*" capture="user" id="att-in" className="hidden" disabled={!!attendance.in} onChange={(e) => handleAttendanceCapture(e, 'check_in')} />
-                   <label htmlFor="att-in" className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.in ? 'bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/30'}`}>
-                     <MapPin size={18} /> {attendance.in ? `Vào: ${attendance.in}` : 'Check In'}
-                   </label>
+        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+            <div className="w-full max-w-sm bg-white p-8 rounded-3xl shadow-2xl border border-slate-200">
+                <div className="text-center mb-8">
+                    <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white mb-4 shadow-lg shadow-blue-500/30">
+                        <ShieldCheck size={32}/>
+                    </div>
+                    <h1 className="text-2xl font-bold text-slate-800">Đăng Nhập Hệ Thống</h1>
                 </div>
-                <div className="relative">
-                   <input type="file" accept="image/*" capture="user" id="att-out" className="hidden" disabled={!attendance.in || !!attendance.out} onChange={(e) => handleAttendanceCapture(e, 'check_out')} />
-                   <label htmlFor="att-out" className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.out ? 'bg-slate-100 text-slate-400 pointer-events-none' : (!attendance.in ? 'opacity-50 cursor-not-allowed pointer-events-none' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100')}`}>
-                     <LogOut size={18} /> {attendance.out ? `Ra: ${attendance.out}` : 'Check Out'}
-                   </label>
+                <div className="space-y-4">
+                    <div className="relative">
+                        <User className="absolute left-4 top-3.5 text-slate-400" size={20}/>
+                        <input
+                            type="text"
+                            placeholder="Tên đăng nhập"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={loginForm.username}
+                            onChange={e => setLoginForm({...loginForm, username: e.target.value})}
+                        />
+                    </div>
+                    <div className="relative">
+                        <Lock className="absolute left-4 top-3.5 text-slate-400" size={20}/>
+                        <input
+                            type="password"
+                            placeholder="Mật khẩu"
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={loginForm.password}
+                            onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+                            onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                        />
+                    </div>
+                    {notification.msg && <div className="text-red-500 text-sm text-center font-medium">{notification.msg}</div>}
+                    <button
+                        onClick={handleLogin}
+                        disabled={loading}
+                        className="w-full py-3 mt-6 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2"
+                    >
+                        {loading ? <Loader2 className="animate-spin" size={20}/> : 'Đăng Nhập'}
+                    </button>
                 </div>
-             </div>
-           )}
+            </div>
         </div>
-
-        <div className="grid gap-4">
-          {tasks.map((task) => {
-            const item = reportData[task.id] || {};
-            const isDone = item.done; const isSent = item.sent;
-            const isLate = checkIsLate(task.time_label, task.late_buffer, isDone);
-
-            // Xử lý class nhấp nháy nếu trễ và chưa làm xong
-            const cardClass = isSent
-                ? 'border-emerald-100 bg-emerald-50/20'
-                : (isLate && !isDone)
-                    ? 'urgent-blink text-red-800' // Class urgent-blink định nghĩa ở trên
-                    : isDone
-                        ? 'border-blue-100 bg-white'
-                        : 'border-transparent shadow-sm bg-white';
-
-            return (
-               <div key={task.id} className={`p-4 rounded-xl border-2 transition-all ${cardClass}`}>
-                  <div className="flex flex-col md:flex-row md:items-center gap-4">
-                     <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => !isSent && handleTaskAction(task.id, 'toggle')}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isDone ? (isSent ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600') : (isLate ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-300')}`}>{isLate && !isDone ? <AlertTriangle size={20}/> : <CheckCircle2 size={20}/>}</div>
-                        <div>
-                           <div className="flex items-center gap-2 text-xs mb-1">
-                               <span className={`font-bold px-2 py-0.5 rounded ${isLate && !isDone ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                                   {task.time_label} {isLate && !isDone ? '(TRỄ)' : ''}
-                               </span>
-                               {item.time && <span className="text-blue-600 font-medium"><Clock size={10} className="inline mr-1"/>{item.time}</span>}
-                           </div>
-                           <h3 className={`font-semibold ${isLate && !isDone ? 'text-red-700' : 'text-slate-800'}`}>{task.title}</h3>
-                        </div>
-                     </div>
-                     <div className="flex flex-col sm:flex-row gap-3 items-end sm:items-center mt-2 md:mt-0 pl-12 md:pl-0">
-                        {task.require_input && <input disabled={!isDone || isSent} value={item.val || ''} onChange={(e) => handleTaskAction(task.id, 'input', e.target.value)} placeholder="Nhập số..." className="w-full sm:w-24 px-3 py-2 text-sm border rounded-lg text-center bg-slate-50"/>}
-                        {task.require_image && (<div className="relative"><input type="file" id={`file-${task.id}`} className="hidden" accept="image/*" disabled={!isDone || isSent} onChange={(e) => handleImageUpload(e, task.id)}/><label htmlFor={`file-${task.id}`} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border cursor-pointer ${!isDone || isSent ? 'bg-slate-100' : 'bg-white'}`}>{item.imageUrl ? <span className="text-indigo-600 flex gap-1"><ImageIcon size={16}/>Xem</span> : <span><Camera size={16}/>Ảnh</span>}</label></div>)}
-                        {isDone && !isSent && <button onClick={() => sendSingleTask(task.id)} disabled={loadingSend === task.id} className="w-10 h-10 bg-blue-600 text-white rounded-lg flex items-center justify-center shadow-lg">{loadingSend === task.id ? <Loader2 className="animate-spin" size={18}/> : <Send size={18}/>}</button>}
-                        {isSent && <span className="text-emerald-600 font-bold text-xs bg-emerald-100 px-3 py-2 rounded-lg"><CheckCircle2 size={14} className="inline"/> Đã gửi</span>}
-                     </div>
-                  </div>
-               </div>
-            );
-          })}
-        </div>
-      </div>
     );
-  };
+};
+
+// ==========================================
+// GIAO DIỆN CHẤM CÔNG VÀ LÀM VIỆC (USER)
+// ==========================================
+const UserDashboard = ({ user, tasks, reports, onLogout, onRefresh, setNotify, roles }) => {
+    const today = getTodayISO();
+    const userTasks = tasks.filter(t => t.role === user.role);
+    const todayReport = reports.find(r => r.report_date === today && r.user_id === user.id) || null;
+    const initialReportData = todayReport ? todayReport.data : {};
+
+    // Sắp xếp các task theo time_label (giờ)
+    const sortedTasks = [...userTasks].sort((a, b) => {
+        if (!a.time_label) return 1;
+        if (!b.time_label) return -1;
+        return a.time_label.localeCompare(b.time_label) || a.sort_order - b.sort_order;
+    });
+
+    const [reportData, setReportData] = useState(initialReportData);
+    const [loading, setLoading] = useState(false);
+    const [fileToUpload, setFileToUpload] = useState(null);
+    const [uploadingTaskId, setUploadingTaskId] = useState(null);
+
+    useEffect(() => {
+        setReportData(initialReportData);
+    }, [todayReport, tasks]);
+
+    const handleInput = (taskId, key, value) => {
+        setReportData(prev => ({
+            ...prev,
+            [taskId]: {
+                ...prev[taskId],
+                [key]: value,
+                done: true,
+                sent: false, // đánh dấu chưa gửi chính thức
+                time: getCurrentTime()
+            }
+        }));
+    };
+
+    const handleUploadImage = async (taskId) => {
+        if (!fileToUpload) return setNotify("Vui lòng chọn ảnh", "error");
+        setUploadingTaskId(taskId);
+        setLoading(true);
+
+        const fileExt = fileToUpload.name.split('.').pop();
+        const fileName = `${user.id}_${taskId}_${Date.now()}.${fileExt}`;
+        const filePath = `reports/${today}/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+            .from('uploads')
+            .upload(filePath, fileToUpload);
+
+        if (uploadError) {
+            setLoading(false);
+            setUploadingTaskId(null);
+            setNotify("Lỗi tải ảnh lên: " + uploadError.message, "error");
+            return;
+        }
+
+        const { data: publicUrlData } = supabase.storage
+            .from('uploads')
+            .getPublicUrl(filePath);
+
+        handleInput(taskId, 'imageUrl', publicUrlData.publicUrl);
+        setFileToUpload(null);
+        setUploadingTaskId(null);
+        setLoading(false);
+        setNotify("Tải ảnh thành công!", "success");
+    };
+
+    const handleSaveReport = async (isFinalSubmit = false) => {
+        setLoading(true);
+        const report = {
+            report_date: today,
+            user_id: user.id,
+            role: user.role,
+            data: reportData
+        };
+
+        let result;
+        if (todayReport) {
+            result = await supabase
+                .from('checklist_logs')
+                .update({ data: reportData, is_submitted: isFinalSubmit, updated_at: new Date() })
+                .eq('id', todayReport.id);
+        } else {
+            result = await supabase
+                .from('checklist_logs')
+                .insert([{ ...report, is_submitted: isFinalSubmit }]);
+        }
+
+        setLoading(false);
+
+        if (result.error) {
+            setNotify("Lỗi lưu báo cáo: " + result.error.message, "error");
+        } else {
+            setNotify(isFinalSubmit ? "Gửi báo cáo thành công!" : "Lưu nháp thành công!", "success");
+            onRefresh(); // Tải lại dữ liệu sau khi lưu
+        }
+    };
+
+    // Lấy tên khu vực
+    const roleName = roles.find(r => r.code === user.role)?.name || user.role;
+
+    const submittedCount = Object.values(reportData).filter(i => i.sent).length;
+    const totalCount = sortedTasks.length;
+    const isAllSubmitted = totalCount > 0 && submittedCount === totalCount;
+
+    return (
+        <div className="p-4 md:p-8 space-y-8 bg-slate-50 min-h-screen">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-200 sticky top-0 bg-white z-10 p-4 -mx-4 -mt-4 md:p-8 md:-mx-8">
+                <div className="flex items-center gap-3">
+                    <Home size={24} className="text-blue-600"/>
+                    <div>
+                        <h1 className="text-xl md:text-2xl font-bold text-slate-800">{roleName}</h1>
+                        <p className="text-sm text-slate-500 flex items-center gap-2"><User size={14}/>{user.name} ({user.role})</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button onClick={onRefresh} className="p-2 text-slate-400 hover:text-blue-600 transition-colors rounded-full bg-slate-100"><RefreshCcw size={18}/></button>
+                    <button onClick={onLogout} className="flex items-center gap-2 p-2 px-3 bg-red-100 text-red-600 rounded-full font-medium text-sm hover:bg-red-200 transition-colors"><LogOut size={16}/><span className="hidden sm:inline">Thoát</span></button>
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200 space-y-4">
+                <h2 className="text-xl font-bold text-slate-800">Tiến độ hôm nay ({today})</h2>
+                <div className="flex items-center gap-4 text-sm font-medium">
+                    <span className="text-slate-600">Đã hoàn thành:</span>
+                    <span className={`font-bold ${submittedCount === totalCount ? 'text-emerald-600' : 'text-orange-500'}`}>
+                        {submittedCount} / {totalCount}
+                    </span>
+                    <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${totalCount > 0 ? (submittedCount / totalCount) * 100 : 0}%` }}></div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="space-y-4">
+                {sortedTasks.map(task => {
+                    const taskData = reportData[task.id] || {};
+                    const isDone = !!taskData.done;
+                    const isSent = !!taskData.sent;
+                    const isLate = checkIsLate(task.time_label, task.late_buffer, taskData.sent);
+                    const isUrgent = isLate && !isSent;
+
+                    return (
+                        <div
+                            key={task.id}
+                            className={`p-4 rounded-xl shadow border transition-all ${isSent ? 'bg-emerald-50 border-emerald-300' : isUrgent ? 'urgent-blink' : 'bg-white border-slate-200'}`}
+                        >
+                            <div className="flex justify-between items-start">
+                                <div className="space-y-1">
+                                    <p className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                        <Clock size={16} className="text-blue-600"/>
+                                        {task.time_label || 'Không giờ'}
+                                        {task.time_label && <span className="text-xs text-slate-400 font-normal">(+{task.late_buffer}p)</span>}
+                                        {isUrgent && <span className="text-red-600 text-xs font-bold flex items-center gap-1"><AlertTriangle size={14}/> TRỄ</span>}
+                                    </p>
+                                    <h3 className={`text-lg font-bold ${isSent ? 'text-emerald-800' : 'text-slate-900'}`}>{task.title}</h3>
+                                    {isSent && <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                                        <CheckCircle2 size={14}/> Đã gửi báo cáo lúc: {taskData.time}
+                                    </p>}
+                                    {taskData.time && !isSent && <p className="text-xs text-orange-600 font-medium flex items-center gap-1">
+                                        <Save size={14}/> Đã lưu nháp lúc: {taskData.time}
+                                    </p>}
+                                </div>
+
+                                {isSent && <CheckCircle2 size={30} className="text-emerald-500 flex-shrink-0"/>}
+                            </div>
+
+                            {!isSent && (
+                                <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                                    {task.require_input && (
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                placeholder="Nhập giá trị/ghi chú báo cáo..."
+                                                className="w-full p-3 rounded-lg border focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                                value={taskData.val || ''}
+                                                onChange={e => handleInput(task.id, 'val', e.target.value)}
+                                            />
+                                            {taskData.val && <XCircle size={18} className="absolute right-3 top-3 text-slate-400 hover:text-red-500 cursor-pointer" onClick={() => handleInput(task.id, 'val', '')}/>}
+                                        </div>
+                                    )}
+
+                                    {task.require_image && (
+                                        <div className="flex gap-3 items-center">
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={e => setFileToUpload(e.target.files[0])}
+                                                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                                            />
+                                            <button
+                                                onClick={() => handleUploadImage(task.id)}
+                                                disabled={loading || uploadingTaskId === task.id || !fileToUpload}
+                                                className={`px-4 py-2 text-sm rounded-lg font-bold transition-colors flex items-center gap-2 flex-shrink-0 ${uploadingTaskId === task.id ? 'bg-amber-500' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
+                                            >
+                                                {uploadingTaskId === task.id ? <Loader2 className="animate-spin" size={18}/> : <Camera size={18}/>}
+                                                {uploadingTaskId === task.id ? 'Đang Tải...' : 'Tải Ảnh'}
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {taskData.imageUrl && (
+                                        <div className="mt-2 text-xs text-green-600 font-medium flex items-center gap-2">
+                                            <ImageIcon size={14}/> Ảnh đã tải lên: <a href={taskData.imageUrl} target="_blank" rel="noreferrer" className="underline hover:text-blue-500 truncate">{taskData.imageUrl.substring(0, 50)}...</a>
+                                        </div>
+                                    )}
+
+                                    <button
+                                        onClick={() => handleInput(task.id, 'sent', true)}
+                                        disabled={loading || (task.require_input && !taskData.val) || (task.require_image && !taskData.imageUrl)}
+                                        className="w-full py-3 mt-4 bg-emerald-600 text-white rounded-lg font-bold text-md hover:bg-emerald-700 transition-colors disabled:bg-slate-400 flex items-center justify-center gap-2"
+                                    >
+                                        <Send size={18}/> BÁO CÁO HOÀN THÀNH
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div className="flex justify-center mt-6 p-4 border-t border-slate-200">
+                <button
+                    onClick={() => handleSaveReport(false)}
+                    disabled={loading || isAllSubmitted}
+                    className="px-6 py-3 bg-blue-100 text-blue-700 rounded-full font-bold text-sm hover:bg-blue-200 transition-colors disabled:bg-slate-200 disabled:text-slate-500 flex items-center gap-2"
+                >
+                    {loading ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>}
+                    {isAllSubmitted ? 'Đã hoàn thành tất cả' : 'Lưu Nháp Toàn Bộ'}
+                </button>
+            </div>
+        </div>
+    );
+};
+
+
+// ==========================================
+// QUẢN LÝ KHU VỰC/VỊ TRÍ (ROLE MANAGER)
+// ==========================================
+const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
+    const [editing, setEditing] = useState({ id: null, name: '', code: '' });
+    const [loading, setLoading] = useState(false);
+
+    const handleEdit = (role) => setEditing({ ...role });
+    const handleNew = () => setEditing({ id: null, name: '', code: '' });
+
+    const handleSaveRole = async () => {
+        if (!editing.name || !editing.code) return setNotify("Chưa nhập Tên hoặc Mã khu vực", "error");
+
+        setLoading(true);
+        const payload = { name: editing.name, code: editing.code.toUpperCase().trim() };
+
+        let result;
+        if (editing.id) {
+            result = await supabase.from('job_roles').update(payload).eq('id', editing.id);
+        } else {
+            result = await supabase.from('job_roles').insert([payload]);
+        }
+
+        setLoading(false);
+        if (result.error) {
+            setNotify("Lỗi lưu Khu vực: " + result.error.message, "error");
+        } else {
+            setNotify("Lưu Khu vực thành công!", "success");
+            onRefresh();
+            handleNew();
+        }
+    };
+
+    const handleDeleteRole = async (id, code) => {
+        const tasksCount = allTasks.filter(t => t.role === code).length;
+        if (tasksCount > 0) {
+            setNotify(`Không thể xóa. Khu vực này có ${tasksCount} công việc đang hoạt động.`, "error");
+            return;
+        }
+
+        if (window.confirm("Bạn có chắc chắn muốn xóa khu vực này?")) {
+            setLoading(true);
+            const { error } = await supabase.from('job_roles').delete().eq('id', id);
+            setLoading(false);
+            if (error) {
+                setNotify("Lỗi xóa: " + error.message, "error");
+            } else {
+                setNotify("Xóa khu vực thành công!", "success");
+                onRefresh();
+            }
+        }
+    };
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-2 bg-white p-6 rounded-xl shadow border border-slate-200">
+                <h3 className="text-lg font-bold mb-4 text-slate-800 flex justify-between items-center">
+                    Danh Sách Khu Vực
+                </h3>
+                <div className="space-y-2">
+                    {roles.map(r => (
+                        <div key={r.id} className={`p-3 border rounded-lg flex items-center justify-between hover:bg-slate-50 ${editing.id === r.id ? 'bg-blue-50 border-blue-200' : 'border-slate-100'}`}>
+                            <div>
+                                <p className="font-bold text-sm text-slate-700">{r.name}</p>
+                                <p className="text-xs text-slate-400">{r.code} ({allTasks.filter(t => t.role === r.code).length} việc)</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => handleEdit(r)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-full"><Edit3 size={16}/></button>
+                                <button onClick={() => handleDeleteRole(r.id, r.code)} disabled={loading} className="p-2 text-red-600 hover:bg-red-100 rounded-full"><Trash2 size={16}/></button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
+                <h3 className="text-lg font-bold mb-4 text-slate-800">
+                    {editing.id ? 'Chỉnh Sửa Khu Vực' : 'Thêm Khu Vực Mới'}
+                </h3>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Tên Khu Vực</label>
+                        <input type="text" value={editing.name} onChange={e => setEditing({...editing, name: e.target.value})} className="w-full p-2 border rounded-lg text-sm" placeholder="Ví dụ: Cửa hàng 1"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Mã Khu Vực (Viết tắt, không dấu)</label>
+                        <input type="text" value={editing.code} onChange={e => setEditing({...editing, code: e.target.value.toUpperCase().trim()})} className="w-full p-2 border rounded-lg text-sm" placeholder="Ví dụ: CH1"/>
+                    </div>
+                    <button onClick={handleSaveRole} disabled={loading} className="w-full py-2 mt-4 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center justify-center gap-2">
+                        {loading ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>}
+                        {editing.id ? 'Lưu Thay Đổi' : 'Thêm Khu Vực'}
+                    </button>
+                    {editing.id && (
+                        <button onClick={handleNew} className="w-full py-2 bg-slate-100 text-slate-600 rounded-lg font-medium text-sm hover:bg-slate-200">
+                            Thêm Mới Khác
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// QUẢN LÝ CÔNG VIỆC (TASK MANAGER)
+// [Đã cập nhật: Sắp xếp theo time_label, loại bỏ nút Lên/Xuống]
+// ==========================================
+const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
+    const [editing, setEditing] = useState({
+        id: null,
+        role: roles.length > 0 ? roles[0].code : '',
+        title: '',
+        time_label: '',
+        late_buffer: 15,
+        require_input: false,
+        require_image: false,
+        sort_order: 1
+    });
+    const formRef = useRef(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (!editing.id && roles.length > 0 && !editing.role) {
+            setEditing(prev => ({ ...prev, role: roles[0].code }));
+        }
+    }, [roles]);
+
+    const tasks = allTasks.filter(t => t.role === editing.role).sort((a, b) => {
+        if (!a.time_label) return 1;
+        if (!b.time_label) return -1;
+        return a.time_label.localeCompare(b.time_label) || a.sort_order - b.sort_order;
+    });
+
+    const handleEdit = (task) => {
+        setEditing({ ...task });
+        formRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    const handleNew = () => {
+        setEditing({
+            id: null,
+            role: editing.role,
+            title: '',
+            time_label: '',
+            late_buffer: 15,
+            require_input: false,
+            require_image: false,
+            sort_order: (tasks.length > 0 ? tasks[tasks.length - 1].sort_order : 0) + 1
+        });
+    };
+
+    const handleSaveTask = async () => {
+        if (!editing.title || !editing.role) return setNotify("Chưa nhập Tên việc hoặc Khu vực", "error");
+
+        setLoading(true);
+        const payload = {
+            role: editing.role,
+            title: editing.title,
+            time_label: editing.time_label || null,
+            late_buffer: editing.late_buffer,
+            require_input: editing.require_input,
+            require_image: editing.require_image,
+            sort_order: editing.sort_order // Dùng cho sắp xếp phụ
+        };
+
+        let result;
+        if (editing.id) {
+            result = await supabase.from('task_definitions').update(payload).eq('id', editing.id);
+        } else {
+            result = await supabase.from('task_definitions').insert([payload]);
+        }
+
+        setLoading(false);
+        if (result.error) {
+            setNotify("Lỗi lưu công việc: " + result.error.message, "error");
+        } else {
+            setNotify("Lưu công việc thành công!", "success");
+            onRefresh();
+            handleNew();
+        }
+    };
+
+    const handleDeleteTask = async (id) => {
+        if (window.confirm("Bạn có chắc chắn muốn xóa công việc này?")) {
+            setLoading(true);
+            const { error } = await supabase.from('task_definitions').delete().eq('id', id);
+            setLoading(false);
+            if (error) {
+                setNotify("Lỗi xóa: " + error.message, "error");
+            } else {
+                setNotify("Xóa công việc thành công!", "success");
+                onRefresh();
+                handleNew();
+            }
+        }
+    };
+
+    // Loại bỏ hoàn toàn hàm handleMove
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-2 bg-white p-6 rounded-xl shadow border border-slate-200">
+                <h3 className="text-lg font-bold mb-4 text-slate-800">
+                    Danh Sách Công Việc
+                </h3>
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Chọn Khu Vực</label>
+                    <select value={editing.role} onChange={e => setEditing(prev => ({ ...prev, role: e.target.value, id: null }))} className="w-full p-2 border rounded-lg text-sm bg-white">
+                        {roles.map(r => (
+                            <option key={r.code} value={r.code}>{r.name} ({r.code})</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2">
+                    {tasks.map((t, idx) => (
+                        <div key={t.id} className={`p-3 border-b border-slate-50 last:border-0 flex items-center justify-between hover:bg-slate-50 ${editing.id === t.id ? 'bg-orange-50' : ''}`}>
+                            <div className="flex items-center gap-3">
+                                {/* Loại bỏ nút Lên/Xuống */}
+                                <div>
+                                    <p className="font-bold text-sm text-slate-700">{t.title}</p>
+                                    <p className="text-xs text-slate-400">
+                                        {t.time_label ? `⏰ ${t.time_label}` : 'Không giờ'} (+{t.late_buffer}p)
+                                        {t.require_input && ' • 🔢 Nhập số'}
+                                        {t.require_image && ' • 📸 Chụp ảnh'}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => handleEdit(t)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-full"><Edit3 size={16}/></button>
+                                <button onClick={() => handleDeleteTask(t.id)} disabled={loading} className="p-2 text-red-600 hover:bg-red-100 rounded-full"><Trash2 size={16}/></button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow border border-slate-200 sticky top-4" ref={formRef}>
+                <h3 className="text-lg font-bold mb-4 text-slate-800">
+                    {editing.id ? 'Chỉnh Sửa Công Việc' : 'Thêm Công Việc Mới'}
+                </h3>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Tên Công Việc</label>
+                        <input type="text" value={editing.title} onChange={e => setEditing({...editing, title: e.target.value})} className="w-full p-2 border rounded-lg text-sm" placeholder="Ví dụ: Dọn dẹp quầy kệ"/>
+                    </div>
+                    <div className="flex gap-2">
+                        <div className="w-1/2">
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Giờ Báo Cáo (HH:MM)</label>
+                            <input type="time" value={editing.time_label || ''} onChange={e => setEditing({...editing, time_label: e.target.value})} className="w-full p-2 border rounded-lg text-sm" />
+                        </div>
+                        <div className="w-1/2">
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Đệm Trễ (Phút)</label>
+                            <input type="number" value={editing.late_buffer} onChange={e => setEditing({...editing, late_buffer: parseInt(e.target.value) || 0})} className="w-full p-2 border rounded-lg text-sm" />
+                        </div>
+                    </div>
+                    <div className="flex gap-4">
+                        <label className="flex items-center text-sm font-medium text-slate-700 cursor-pointer">
+                            <input type="checkbox" checked={editing.require_input} onChange={e => setEditing({...editing, require_input: e.target.checked})} className="mr-2 h-4 w-4 text-blue-600 border-gray-300 rounded"/>
+                            Yêu cầu nhập số/ghi chú
+                        </label>
+                        <label className="flex items-center text-sm font-medium text-slate-700 cursor-pointer">
+                            <input type="checkbox" checked={editing.require_image} onChange={e => setEditing({...editing, require_image: e.target.checked})} className="mr-2 h-4 w-4 text-blue-600 border-gray-300 rounded"/>
+                            Yêu cầu chụp ảnh
+                        </label>
+                    </div>
+                    <button onClick={handleSaveTask} disabled={loading} className="w-full py-2 mt-4 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center justify-center gap-2">
+                        {loading ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>}
+                        {editing.id ? 'Lưu Thay Đổi' : 'Thêm Công Việc'}
+                    </button>
+                    {editing.id && (
+                        <button onClick={handleNew} className="w-full py-2 bg-slate-100 text-slate-600 rounded-lg font-medium text-sm hover:bg-slate-200">
+                            Thêm Mới Khác
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// ==========================================
+// QUẢN LÝ NGƯỜI DÙNG (USER MANAGER)
+// ==========================================
+const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
+    const [editing, setEditing] = useState({ id: null, username: '', password: '', name: '', role: roles.length > 0 ? roles[0].code : '' });
+    const [loading, setLoading] = useState(false);
+    const formRef = useRef(null);
+
+    useEffect(() => {
+        if (!editing.id && roles.length > 0 && !editing.role) {
+            setEditing(prev => ({ ...prev, role: roles[0].code }));
+        }
+    }, [roles]);
+
+    const handleEdit = (user) => {
+        setEditing({ ...user, password: '' });
+        formRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    const handleNew = () => {
+        setEditing({ id: null, username: '', password: '', name: '', role: editing.role });
+    };
+
+    const handleSaveUser = async () => {
+        if (!editing.username || !editing.name || (!editing.id && !editing.password)) {
+            return setNotify("Vui lòng nhập đầy đủ Tên, Tên đăng nhập và Mật khẩu (khi thêm mới).", "error");
+        }
+
+        setLoading(true);
+        const payload = {
+            username: editing.username,
+            name: editing.name,
+            role: editing.role
+        };
+        if (editing.password) {
+            payload.password = editing.password;
+        }
+
+        let result;
+        if (editing.id) {
+            result = await supabase.from('app_users').update(payload).eq('id', editing.id);
+        } else {
+            result = await supabase.from('app_users').insert([payload]);
+        }
+
+        setLoading(false);
+        if (result.error) {
+            setNotify("Lỗi lưu người dùng: " + result.error.message, "error");
+        } else {
+            setNotify("Lưu người dùng thành công!", "success");
+            onRefresh();
+            handleNew();
+        }
+    };
+
+    const handleDeleteUser = async (id) => {
+        if (window.confirm("Bạn có chắc chắn muốn xóa người dùng này?")) {
+            setLoading(true);
+            const { error } = await supabase.from('app_users').delete().eq('id', id);
+            setLoading(false);
+            if (error) {
+                setNotify("Lỗi xóa: " + error.message, "error");
+            } else {
+                setNotify("Xóa người dùng thành công!", "success");
+                onRefresh();
+            }
+        }
+    };
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="md:col-span-2 bg-white p-6 rounded-xl shadow border border-slate-200">
+                <h3 className="text-lg font-bold mb-4 text-slate-800">Danh Sách Nhân Sự</h3>
+                <div className="space-y-2">
+                    {users.map(u => (
+                        <div key={u.id} className={`p-3 border rounded-lg flex items-center justify-between hover:bg-slate-50 ${editing.id === u.id ? 'bg-blue-50 border-blue-200' : 'border-slate-100'}`}>
+                            <div>
+                                <p className="font-bold text-sm text-slate-700">{u.name}</p>
+                                <p className="text-xs text-slate-400">@{u.username} • Khu vực: {u.role}</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => handleEdit(u)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-full"><Edit3 size={16}/></button>
+                                <button onClick={() => handleDeleteUser(u.id)} disabled={loading} className="p-2 text-red-600 hover:bg-red-100 rounded-full"><Trash2 size={16}/></button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow border border-slate-200 sticky top-4" ref={formRef}>
+                <h3 className="text-lg font-bold mb-4 text-slate-800">
+                    {editing.id ? 'Chỉnh Sửa Người Dùng' : 'Thêm Người Dùng Mới'}
+                </h3>
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Tên Hiển Thị</label>
+                        <input type="text" value={editing.name} onChange={e => setEditing({...editing, name: e.target.value})} className="w-full p-2 border rounded-lg text-sm" placeholder="Ví dụ: Nguyễn Văn A"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Tên Đăng Nhập</label>
+                        <input type="text" value={editing.username} onChange={e => setEditing({...editing, username: e.target.value})} className="w-full p-2 border rounded-lg text-sm" placeholder="Ví dụ: vana"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Mật Khẩu {editing.id ? ' (Bỏ trống để giữ nguyên)' : ''}</label>
+                        <input type="password" value={editing.password} onChange={e => setEditing({...editing, password: e.target.value})} className="w-full p-2 border rounded-lg text-sm" placeholder="Mật khẩu"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Khu Vực</label>
+                        <select value={editing.role} onChange={e => setEditing({...editing, role: e.target.value})} className="w-full p-2 border rounded-lg text-sm bg-white">
+                            {roles.map(r => (
+                                <option key={r.code} value={r.code}>{r.name} ({r.code})</option>
+                            ))}
+                        </select>
+                    </div>
+                    <button onClick={handleSaveUser} disabled={loading} className="w-full py-2 mt-4 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center justify-center gap-2">
+                        {loading ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>}
+                        {editing.id ? 'Lưu Thay Đổi' : 'Thêm Người Dùng'}
+                    </button>
+                    {editing.id && (
+                        <button onClick={handleNew} className="w-full py-2 bg-slate-100 text-slate-600 rounded-lg font-medium text-sm hover:bg-slate-200">
+                            Thêm Mới Khác
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// TỔNG QUAN HÔM NAY (ADMIN REPORTS)
+// ==========================================
+const AdminReports = ({ reports, allTasks, roles }) => {
+    const today = getTodayISO();
+    const todayReports = reports.filter(r => r.report_date === today);
+
+    const roleMap = roles.reduce((acc, r) => ({ ...acc, [r.code]: r.name }), {});
+
+    // Tính toán tiến độ
+    const progressData = roles.map(role => {
+        const roleReports = todayReports.filter(r => r.role === role.code);
+        const roleTasks = allTasks.filter(t => t.role === role.code);
+        const totalTasks = roleTasks.length;
+
+        let completedReports = 0;
+        let pendingReports = 0;
+        let submittedCount = 0;
+
+        roleReports.forEach(r => {
+            const tasksSubmitted = Object.values(r.data).filter(item => item.sent).length;
+            if (tasksSubmitted === totalTasks && totalTasks > 0) {
+                completedReports++;
+            } else if (tasksSubmitted > 0) {
+                pendingReports++;
+            }
+            submittedCount += tasksSubmitted;
+        });
+
+        const totalUsers = roleReports.length;
+        const totalSent = totalTasks * totalUsers;
+        const overallPercent = totalSent > 0 ? Math.round((submittedCount / totalSent) * 100) : 0;
+
+        return {
+            role: role.code,
+            name: role.name,
+            totalUsers,
+            completedUsers: completedReports,
+            pendingUsers: pendingReports,
+            overallPercent,
+        };
+    });
+
+    return (
+        <div className="space-y-6">
+            <h2 className="text-xl font-bold text-slate-800">Tổng Quan Báo Cáo ({today})</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {progressData.map(p => (
+                    <div key={p.role} className="bg-white p-6 rounded-xl shadow-lg border border-slate-200 space-y-3">
+                        <div className="flex justify-between items-center">
+                            <h3 className="text-lg font-bold text-blue-600 flex items-center gap-2"><MapPin size={20}/> {p.name}</h3>
+                            <span className={`text-2xl font-extrabold ${p.overallPercent === 100 ? 'text-emerald-600' : 'text-orange-500'}`}>{p.overallPercent}%</span>
+                        </div>
+                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500" style={{ width: `${p.overallPercent}%` }}></div>
+                        </div>
+                        <div className="text-sm text-slate-600 pt-2 border-t border-slate-100">
+                            <p>Tổng Nhân Sự: <span className="font-bold text-slate-800">{p.totalUsers}</span></p>
+                            <p>Hoàn thành (100%): <span className="font-bold text-emerald-600">{p.completedUsers}</span></p>
+                            <p>Đang làm: <span className="font-bold text-orange-500">{p.pendingUsers}</span></p>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            <h3 className="text-lg font-bold text-slate-800 pt-4 border-t border-slate-200">Chi Tiết Báo Cáo Nhân Sự</h3>
+            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+                            <tr>
+                                <th className="p-4">Nhân viên</th>
+                                <th className="p-4">Khu vực</th>
+                                <th className="p-4">Tiến độ</th>
+                                <th className="p-4">Trạng thái</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {todayReports.map(r => {
+                                const roleTasks = allTasks.filter(t => t.role === r.role);
+                                const totalTasks = roleTasks.length;
+                                const submittedCount = Object.values(r.data).filter(item => item.sent).length;
+                                const percent = totalTasks > 0 ? Math.round((submittedCount / totalTasks) * 100) : 0;
+
+                                let statusText = "Đang chờ";
+                                let statusColor = "bg-slate-200 text-slate-600";
+                                if (percent === 100) {
+                                    statusText = "Hoàn thành";
+                                    statusColor = "bg-emerald-100 text-emerald-700";
+                                } else if (percent > 0) {
+                                    statusText = "Đang tiến hành";
+                                    statusColor = "bg-yellow-100 text-yellow-700";
+                                }
+
+                                return (
+                                    <tr key={r.id} className="hover:bg-slate-50">
+                                        <td className="p-4 font-medium">{r.app_users.name}</td>
+                                        <td className="p-4">{roleMap[r.role] || r.role}</td>
+                                        <td className="p-4 font-bold text-slate-700">{submittedCount}/{totalTasks} ({percent}%)</td>
+                                        <td className="p-4">
+                                            <span className={`px-3 py-1 text-xs font-semibold rounded-full ${statusColor}`}>{statusText}</span>
+                                        </td>
+                                    </tr>
+                                )
+                            })}
+                            {todayReports.length === 0 && (
+                                <tr><td colSpan="4" className="p-4 text-center text-slate-500">Chưa có báo cáo nào hôm nay</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// TỔNG QUAN CHẤM CÔNG (ADMIN TIMESHEET)
+// ==========================================
+const AdminTimesheet = ({ timeLogs, users }) => {
+    // Logic cho AdminTimesheet (hiển thị logs, vị trí, etc.)
+    // Phần này yêu cầu cột vị trí (location) trong timeLogs.
+
+    // Tạm thời hiển thị danh sách log
+    const userMap = users.reduce((acc, u) => ({ ...acc, [u.id]: u.name }), {});
+
+    return (
+        <div className="space-y-6">
+            <h2 className="text-xl font-bold text-slate-800">Lịch Sử Chấm Công & Định Vị</h2>
+            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+                            <tr>
+                                <th className="p-4">Thời gian</th>
+                                <th className="p-4">Nhân viên</th>
+                                <th className="p-4">Thao tác</th>
+                                <th className="p-4">Vị trí (nếu có)</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {timeLogs.map((log) => (
+                                <tr key={log.id} className="hover:bg-slate-50">
+                                    <td className="p-4 font-mono text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
+                                    <td className="p-4 font-medium">{userMap[log.user_id] || log.user_id}</td>
+                                    <td className="p-4">
+                                        <span className={`px-3 py-1 text-xs font-semibold rounded-full ${log.type === 'check_in' ? 'bg-indigo-100 text-indigo-700' : 'bg-red-100 text-red-700'}`}>
+                                            {log.type === 'check_in' ? 'Check In' : 'Check Out'}
+                                        </span>
+                                    </td>
+                                    <td className="p-4">
+                                        {log.location ?
+                                            <a href={`https://www.google.com/maps/search/?api=1&query=${log.location.lat},${log.location.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline flex items-center gap-1">
+                                                <MapPin size={16}/> Xem Bản Đồ
+                                            </a>
+                                            : "Không có dữ liệu vị trí"}
+                                    </td>
+                                </tr>
+                            ))}
+                            {timeLogs.length === 0 && (
+                                <tr><td colSpan="4" className="p-4 text-center text-slate-500">Chưa có dữ liệu chấm công nào</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// ==========================================
+// LỊCH SỬ BÁO CÁO (CHUYÊN NGHIỆP) [THÊM MỚI]
+// ==========================================
+const AdminReportHistory = ({ allTasks, roles, users, setNotify }) => {
+    const [filter, setFilter] = useState({ date: getTodayISO(), user_id: '', role: '' });
+    const [logs, setLogs] = useState([]);
+    const [detailReport, setDetailReport] = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        fetchReports();
+    }, [filter.date, filter.user_id, filter.role]); // Chỉ thay đổi khi filter thay đổi
+
+    const fetchReports = async () => {
+        setLoading(true);
+        setDetailReport(null);
+        let query = supabase.from('checklist_logs').select('*, app_users(id, name, role)');
+
+        // Lọc theo ngày
+        if (filter.date) {
+            query = query.eq('report_date', filter.date);
+        }
+
+        // Lọc theo người dùng
+        if (filter.user_id) query = query.eq('user_id', filter.user_id);
+
+        // Lọc theo khu vực
+        if (filter.role) query = query.eq('role', filter.role);
+
+        // Sắp xếp theo ngày mới nhất và thời gian tạo
+        query = query.order('report_date', { ascending: false }).order('created_at', { ascending: false });
+
+        const { data, error } = await query;
+        if (error) setNotify("Lỗi tải báo cáo: " + error.message, "error");
+        else setLogs(data || []);
+
+        setLoading(false);
+    };
+
+    const handleDateChange = (e) => {
+        setFilter(prev => ({ ...prev, date: e.target.value }));
+    };
+
+    const viewDetail = (log) => {
+        // Ánh xạ dữ liệu báo cáo (log.data) với cấu hình công việc (allTasks)
+        const roleTasks = allTasks.filter(t => t.role === log.role).sort((a, b) => {
+            if (!a.time_label) return 1;
+            if (!b.time_label) return -1;
+            return a.time_label.localeCompare(b.time_label) || a.sort_order - b.sort_order;
+        });
+
+        const detailedItems = roleTasks.map(task => {
+            const itemData = log.data[task.id];
+            // Không tính trễ khi xem lịch sử, chỉ hiển thị trạng thái đã gửi
+            return {
+                ...task,
+                ...itemData, // done, time, val, imageUrl, sent
+                status: itemData?.sent ? 'sent' : 'pending',
+            };
+        });
+        setDetailReport({ ...log, detailedItems });
+    };
+
+    // Chuẩn bị dữ liệu hiển thị trên bảng
+    const roleMap = roles.reduce((acc, r) => ({ ...acc, [r.code]: r.name }), {});
+    const userMap = users.reduce((acc, u) => ({ ...acc, [u.id]: u.name }), {});
+
+    return (
+        <div className="space-y-6">
+            <h2 className="text-xl font-bold text-slate-800">Lịch Sử Báo Cáo Chi Tiết</h2>
+
+            {/* Bộ Lọc */}
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-4 items-end">
+                <div className="flex-1 min-w-[150px]">
+                    <label className="text-xs font-bold text-slate-600 block mb-1">Lọc theo Ngày</label>
+                    <input type="date" className="w-full p-2 rounded border text-sm" value={filter.date} onChange={handleDateChange} max={getTodayISO()} />
+                </div>
+                <div className="flex-1 min-w-[150px]">
+                    <label className="text-xs font-bold text-slate-600 block mb-1">Lọc theo Khu vực</label>
+                    <select className="w-full p-2 rounded border text-sm bg-white" value={filter.role} onChange={e => setFilter({...filter, role: e.target.value, user_id: ''})}>
+                        <option value="">-- Tất cả Khu vực --</option>
+                        {roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}
+                    </select>
+                </div>
+                <div className="flex-1 min-w-[150px]">
+                    <label className="text-xs font-bold text-slate-600 block mb-1">Lọc theo Nhân viên</label>
+                    <select className="w-full p-2 rounded border text-sm bg-white" value={filter.user_id} onChange={e => setFilter({...filter, user_id: e.target.value})}>
+                        <option value="">-- Tất cả Nhân viên --</option>
+                        {users.filter(u => !filter.role || u.role === filter.role).map(u => (
+                            <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                        ))}
+                    </select>
+                </div>
+                <button onClick={fetchReports} disabled={loading} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 transition-colors flex items-center gap-2">
+                    {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tải Dữ Liệu
+                </button>
+            </div>
+
+            {/* Bảng Kết Quả */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+                            <tr>
+                                <th className="p-4">Ngày</th>
+                                <th className="p-4">Khu Vực</th>
+                                <th className="p-4">Nhân viên</th>
+                                <th className="p-4">Tổng số việc</th>
+                                <th className="p-4">Hoàn thành</th>
+                                <th className="p-4">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {loading && <tr><td colSpan="6" className="p-6 text-center text-blue-500 font-medium"><Loader2 className="animate-spin inline mr-2"/>Đang tải...</td></tr>}
+                            {!loading && logs.length === 0 && <tr><td colSpan="6" className="p-6 text-center text-slate-400">Không tìm thấy báo cáo nào với bộ lọc này</td></tr>}
+                            {logs.map((log) => {
+                                // Lấy số lượng task của role này để tính tổng
+                                const roleTasksCount = allTasks.filter(t => t.role === log.role).length;
+                                const sentCount = Object.values(log.data).filter(i => i.sent).length;
+                                const percent = roleTasksCount > 0 ? Math.round((sentCount/roleTasksCount)*100) : 0;
+                                return (
+                                    <tr key={log.id} className="hover:bg-slate-50">
+                                        <td className="p-4 font-mono text-slate-500">{log.report_date}</td>
+                                        <td className="p-4 font-bold text-slate-700">{roleMap[log.role] || log.role}</td>
+                                        <td className="p-4">{userMap[log.user_id] || log.app_users.name}</td>
+                                        <td className="p-4">{roleTasksCount}</td>
+                                        <td className="p-4"><span className={`font-bold ${percent === 100 ? 'text-emerald-600' : 'text-orange-500'}`}>{sentCount} ({percent}%)</span></td>
+                                        <td className="p-4"><button onClick={() => viewDetail(log)} className="text-blue-600 hover:underline font-medium flex items-center gap-1"><ExternalLink size={16}/> Xem chi tiết</button></td>
+                                    </tr>
+                                )
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Modal Chi Tiết */}
+            {detailReport && (
+                <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl w-full max-w-4xl shadow-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-white p-6 border-b flex justify-between items-center z-10">
+                            <h3 className="font-bold text-xl text-slate-800">Chi Tiết Báo Cáo ({detailReport.report_date})</h3>
+                            <button onClick={() => setDetailReport(null)} className="p-2 text-slate-500 hover:text-slate-800"><X size={24}/></button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-lg text-sm">
+                               <p><span className="font-bold block">Nhân viên:</span> {detailReport.app_users.name}</p>
+                               <p><span className="font-bold block">Khu vực:</span> {roleMap[detailReport.role] || detailReport.role}</p>
+                               <p><span className="font-bold block">Tổng việc:</span> {detailReport.detailedItems.length}</p>
+                               <p><span className="font-bold block">Hoàn thành:</span> {detailReport.detailedItems.filter(i => i.sent).length}</p>
+                           </div>
+                           <h4 className="font-bold text-slate-700 mt-4">Danh Sách Công Việc</h4>
+                           <div className="space-y-3">
+                               {detailReport.detailedItems.map((item) => (
+                                   <div key={item.id} className={`p-3 rounded-lg border flex items-center justify-between gap-3 text-sm ${item.status === 'sent' ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-100'}`}>
+                                       <div className="flex-1">
+                                           <p className="font-medium text-slate-800">{item.title}</p>
+                                           <p className="text-xs text-slate-500 flex items-center gap-2">
+                                               <Clock size={12}/> {item.time_label}
+                                               {item.time && <span>(Gửi lúc: {item.time})</span>}
+                                           </p>
+                                           {item.val && <p className="text-xs font-bold text-amber-700 mt-1">Ghi chú: {item.val}</p>}
+                                       </div>
+                                       <div className="flex gap-2 items-center">
+                                           {item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={14}/> Xem Ảnh</a>)}
+                                           <span className={`font-bold px-2 py-1 rounded-full text-xs ${item.status === 'sent' ? 'bg-emerald-200 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                                               {item.status === 'sent' ? 'ĐÃ GỬI' : 'CHƯA GỬI'}
+                                           </span>
+                                       </div>
+                                   </div>
+                               ))}
+                           </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 // ==========================================
 // ADMIN DASHBOARD
 // ==========================================
-const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, setNotify }) => {
-  const [tab, setTab] = useState('timesheet');
-  return (
-    <div>
-      <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1 overflow-x-auto">
-        {[ {id: 'timesheet', icon: CalendarClock, label: 'Chấm Công & Định Vị'}, {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ'}, {id: 'users', icon: Users, label: 'Nhân Sự'}, {id: 'tasks', icon: ListTodo, label: 'Cấu Hình'}, {id: 'roles', icon: Briefcase, label: 'Khu Vực'} ].map(t => (
-           <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm whitespace-nowrap transition-all border-b-2 ${tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><t.icon size={18}/> {t.label}</button>
-        ))}
-        <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
-      </div>
-      {tab === 'timesheet' && <AdminTimesheet timeLogs={timeLogs} users={users} />}
-      {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} />}
-      {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
-      {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
-      {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
-    </div>
-  );
+const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, onLogout, setNotify }) => {
+    const [tab, setTab] = useState('timesheet'); // Giá trị mặc định
+    return (
+        <div className="p-4 md:p-8 space-y-8 bg-slate-50 min-h-screen">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-200 sticky top-0 bg-white z-10 p-4 -mx-4 -mt-4 md:p-8 md:-mx-8">
+                 <div className="flex items-center gap-3">
+                    <ShieldCheck size={24} className="text-blue-600"/>
+                    <h1 className="text-xl md:text-2xl font-bold text-slate-800">Quản Lý Hệ Thống</h1>
+                </div>
+                <button onClick={onLogout} className="flex items-center gap-2 p-2 px-3 bg-red-100 text-red-600 rounded-full font-medium text-sm hover:bg-red-200 transition-colors"><LogOut size={16}/><span className="hidden sm:inline">Thoát</span></button>
+            </div>
+
+            <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1 overflow-x-auto">
+                {[
+                    {id: 'timesheet', icon: CalendarClock, label: 'Chấm Công & Định Vị'},
+                    {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ Hôm Nay'},
+                    {id: 'history', icon: Clock, label: 'Lịch Sử Báo Cáo'}, // THÊM MỚI
+                    {id: 'users', icon: Users, label: 'Nhân Sự'},
+                    {id: 'tasks', icon: ListTodo, label: 'Cấu Hình Việc'},
+                    {id: 'roles', icon: Briefcase, label: 'Khu Vực'}
+                ].map(t => (
+                    <button
+                        key={t.id}
+                        onClick={() => setTab(t.id)}
+                        className={`flex items-center gap-2 px-4 py-3 font-bold text-sm whitespace-nowrap transition-all border-b-2 ${tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                    >
+                        <t.icon size={18}/> {t.label}
+                    </button>
+                ))}
+                <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
+            </div>
+
+            <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
+                {tab === 'timesheet' && <AdminTimesheet timeLogs={timeLogs} users={users} />}
+                {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} />}
+                {tab === 'history' && <AdminReportHistory allTasks={allTasks} roles={roles} users={users} setNotify={setNotify} />} {/* THÊM MỚI */}
+                {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
+                {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
+                {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
+            </div>
+        </div>
+    );
 };
 
-// --- CÁC COMPONENT CON CỦA ADMIN ---
-const AdminTimesheet = ({ timeLogs, users }) => {
-    return (
-        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-             <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                 <h3 className="font-bold text-slate-700">Nhật ký Chấm Công ({getTodayISO()})</h3>
-             </div>
-             <div className="overflow-x-auto">
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
-                    <tr>
-                        <th className="p-4">Thời gian</th>
-                        <th className="p-4">Nhân viên</th>
-                        <th className="p-4">Hành động</th>
-                        <th className="p-4">Ảnh Xác Thực</th>
-                        <th className="p-4">Định Vị (Map)</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                    {timeLogs.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-slate-400">Chưa có dữ liệu</td></tr>}
-                    {timeLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-mono text-slate-500">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</td>
-                            <td className="p-4">
-                                <p className="font-bold text-slate-700">{log.app_users?.name}</p>
-                                <p className="text-xs text-slate-400 uppercase">{log.app_users?.role}</p>
-                            </td>
-                            <td className="p-4">
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${log.action_type==='check_in'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>
-                                    {log.action_type === 'check_in' ? 'VÀO CA' : 'RA CA'}
-                                </span>
-                            </td>
-                            <td className="p-4">
-                                {log.image_url ? (
-                                    <a href={log.image_url} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:scale-105 transition-transform">
-                                        <img src={log.image_url} alt="checkin" className="w-full h-full object-cover"/>
-                                    </a>
-                                ) : <span className="text-xs text-slate-300">Không có ảnh</span>}
-                            </td>
-                            <td className="p-4">
-                                {log.lat && log.lng ? (
-                                    <a href={`http://maps.google.com/maps?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
-                                        <MapPin size={14}/> Xem bản đồ
-                                    </a>
-                                ) : <span className="text-xs text-slate-300">Không có GPS</span>}
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-             </table>
-             </div>
-        </div>
-    )
-}
 
-const AdminReports = ({ reports, allTasks, roles }) => {
-   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(allTasks.map(t => t.role))];
-   return (
-     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-       {roleKeys.map(roleKey => {
-          const roleObj = roles.find(r => r.code === roleKey);
-          const roleName = roleObj ? roleObj.name : roleKey;
-          const roleTasks = allTasks.filter(t => t.role === roleKey);
-          if (roleTasks.length === 0 && !roleObj) return null;
-          const roleReport = reports[roleKey] || {};
-          const sentCount = Object.values(roleReport).filter(i => i.sent).length;
-          const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
-          return (
-             <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-4 bg-slate-50 border-b border-slate-100">
-                   <div className="flex justify-between items-center mb-2"><h3 className="font-bold text-slate-800">{roleName}</h3><span className="text-xs font-bold bg-white border px-2 py-1 rounded-full">{sentCount}/{roleTasks.length}</span></div>
-                   <div className="w-full bg-slate-200 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div></div>
-                </div>
-                <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
-                   {roleTasks.map(task => {
-                      const item = roleReport[task.id];
-                      const isLate = checkIsLate(task.time_label, task.late_buffer, item?.sent);
-                      // Hiển thị nội dung công việc giống với bên nhân viên để đồng nhất
-                      if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
-                      return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
-                   })}
-                </div>
-             </div>
-          )
-       })}
-     </div>
-   )
-}
+// ==========================================
+// APP CHÍNH
+// ==========================================
+const App = () => {
+    const [user, setUser] = useState(null);
+    const [usersList, setUsersList] = useState([]);
+    const [rolesList, setRolesList] = useState([]);
+    const [tasksConfig, setTasksConfig] = useState([]);
+    const [reportsList, setReportsList] = useState([]);
+    const [timeLogs, setTimeLogs] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [notification, setNotification] = useState({ msg: '', type: '' });
 
-const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
-  const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
-  const [moveLoading, setMoveLoading] = useState(false);
-  const formRef = useRef(null); // Ref để cuộn trang
-
-  useEffect(() => {
-      // Chỉ set mặc định khi chưa có editing.role và không đang ở chế độ edit
-      if(roles.length > 0 && !editing.role && !editing.id) {
-          setEditing(prev => ({...prev, role: roles[0].code}));
-      }
-  }, [roles]);
-
-  const resetForm = () => setEditing({ id: null, role: roles[0]?.code || '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
-
-  const handleSaveTask = async () => {
-     if(!editing.title) return setNotify("Chưa nhập tên việc", "error");
-     const payload = {
-         role: editing.role, title: editing.title, time_label: editing.time_label,
-         late_buffer: editing.late_buffer, require_input: editing.require_input,
-         require_image: editing.require_image
-     };
-
-     if (editing.id) {
-         // Update
-         const { error } = await supabase.from('task_definitions').update(payload).eq('id', editing.id);
-         if(error) setNotify("Lỗi cập nhật", "error"); else { setNotify("Đã cập nhật"); onRefresh(); resetForm(); }
-     } else {
-         // Create new (get max order first)
-         const maxOrder = allTasks.filter(t => t.role === editing.role).length + 1;
-         const { error } = await supabase.from('task_definitions').insert({...payload, sort_order: maxOrder});
-         if(error) setNotify("Lỗi tạo việc", "error"); else { setNotify("Đã thêm công việc"); onRefresh(); resetForm(); }
-     }
-  };
-
-  const handleEdit = (task) => {
-      // Sửa lỗi Edit: Set toàn bộ state và cuộn lên đầu
-      setEditing({ ...task });
-      if(formRef.current) {
-          formRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-  };
-
-  const handleDeleteTask = async (id) => { if(!window.confirm("Xóa việc này?")) return; const { error } = await supabase.from('task_definitions').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-
-  // Logic đổi vị trí (Swap Order) - Đã cải thiện
-  const handleMove = async (task, direction) => {
-      if (moveLoading) return;
-      setMoveLoading(true);
-
-      const roleTasks = allTasks.filter(t => t.role === task.role).sort((a,b) => a.sort_order - b.sort_order);
-      const index = roleTasks.findIndex(t => t.id === task.id);
-
-      if ((direction === 'up' && index === 0) || (direction === 'down' && index === roleTasks.length - 1)) {
-          setMoveLoading(false);
-          return;
-      }
-
-      const swapTask = direction === 'up' ? roleTasks[index - 1] : roleTasks[index + 1];
-
-      try {
-          // Swap values
-          await supabase.from('task_definitions').update({ sort_order: swapTask.sort_order }).eq('id', task.id);
-          await supabase.from('task_definitions').update({ sort_order: task.sort_order }).eq('id', swapTask.id);
-          await onRefresh(); // Chờ refresh xong mới cho bấm tiếp
-      } catch (err) {
-          setNotify("Lỗi sắp xếp", "error");
-      } finally {
-          setMoveLoading(false);
-      }
-  };
-
-  return (
-     <div className="space-y-6">
-        {/* Form Nhập Liệu - Có ref để scroll tới */}
-        <div ref={formRef} className={`p-4 rounded-xl border grid grid-cols-2 md:grid-cols-6 gap-3 transition-all ${editing.id ? 'bg-orange-50 border-orange-200 shadow-lg ring-2 ring-orange-100' : 'bg-indigo-50 border-indigo-100'}`}>
-           {editing.id && <div className="col-span-2 md:col-span-6 text-orange-700 font-bold flex items-center gap-2 mb-2"><Edit3 size={16}/> Đang chỉnh sửa: {editing.title}</div>}
-
-           <div className="col-span-2 md:col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Khu vực</label><select className="w-full p-2 rounded border text-sm bg-white" value={editing.role} onChange={e => setEditing({...editing, role: e.target.value})}>{roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select></div>
-           <div className="col-span-2 md:col-span-2"><label className="text-xs font-bold text-indigo-800 block mb-1">Tên công việc</label><input className="w-full p-2 rounded border text-sm" placeholder="VD: Dọn hồ cá" value={editing.title} onChange={e => setEditing({...editing, title: e.target.value})}/></div>
-           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Giờ (VD: 15:30)</label><input className="w-full p-2 rounded border text-sm" placeholder="15:30" value={editing.time_label} onChange={e => setEditing({...editing, time_label: e.target.value})}/></div>
-           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Cho trễ (phút)</label><input type="number" className="w-full p-2 rounded border text-sm" placeholder="15" value={editing.late_buffer} onChange={e => setEditing({...editing, late_buffer: parseInt(e.target.value)||0})}/></div>
-           <div className="col-span-2 md:col-span-1 flex flex-col justify-center gap-2"><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_input} onChange={e => setEditing({...editing, require_input: e.target.checked})} /> Nhập số liệu?</label><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_image} onChange={e => setEditing({...editing, require_image: e.target.checked})} /> Chụp ảnh?</label></div>
-           <div className="col-span-2 md:col-span-6 flex items-end gap-2 pt-2 border-t border-black/5 mt-2">
-               {editing.id && <button onClick={resetForm} className="flex items-center gap-2 bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-slate-300"><XCircle size={16}/> Hủy Bỏ</button>}
-               <button onClick={handleSaveTask} className={`flex-1 flex items-center justify-center gap-2 text-white px-4 py-2 rounded-lg font-bold shadow-lg text-sm ${editing.id ? 'bg-orange-600 hover:bg-orange-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>{editing.id ? <><Save size={16}/> Cập nhật Thay Đổi</> : <><Plus size={16}/> Thêm Mới</>}</button>
-           </div>
-        </div>
-
-        <div className="space-y-4">
-            {roles.map(role => {
-                const tasks = allTasks.filter(t => t.role === role.code);
-                if(tasks.length === 0) return null;
-                return (
-                    <div key={role.code} className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                        <div className="bg-slate-50 p-3 border-b border-slate-100 font-bold text-slate-700 flex justify-between">{role.name} <span className="text-xs font-normal bg-white border px-2 rounded flex items-center">{role.code}</span></div>
-                        {tasks.map((t, idx) => (
-                            <div key={t.id} className={`p-3 border-b border-slate-50 last:border-0 flex items-center justify-between hover:bg-slate-50 ${editing.id === t.id ? 'bg-orange-50' : ''}`}>
-                                <div className="flex items-center gap-3">
-                                    <div className="flex flex-col gap-1">
-                                        <button onClick={() => handleMove(t, 'up')} disabled={idx === 0 || moveLoading} className="text-slate-300 hover:text-blue-600 disabled:opacity-0 p-1 hover:bg-slate-100 rounded"><ArrowUp size={16}/></button>
-                                        <button onClick={() => handleMove(t, 'down')} disabled={idx === tasks.length - 1 || moveLoading} className="text-slate-300 hover:text-blue-600 disabled:opacity-0 p-1 hover:bg-slate-100 rounded"><ArrowDown size={16}/></button>
-                                    </div>
-                                    <div>
-                                        <p className="font-bold text-sm text-slate-700">{t.title}</p>
-                                        <p className="text-xs text-slate-400">
-                                            {t.time_label ? `⏰ ${t.time_label}` : 'Không giờ'} (+{t.late_buffer}p)
-                                            {t.require_input && ' • 🔢 Nhập số'}
-                                            {t.require_image && ' • 📸 Chụp ảnh'}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex gap-1">
-                                    <button onClick={() => handleEdit(t)} className="text-blue-500 hover:bg-blue-50 p-2 rounded-lg transition-all"><Edit3 size={18}/></button>
-                                    <button onClick={() => handleDeleteTask(t.id)} className="text-slate-400 hover:bg-red-50 hover:text-red-500 p-2 rounded-lg transition-all"><Trash2 size={18}/></button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )
-            })}
-        </div>
-     </div>
-  )
-}
-
-const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
-    const [newRole, setNewRole] = useState({ code: '', name: '' });
-    const [cloneData, setCloneData] = useState({ from: '', toCode: '', toName: '' });
-
-    const handleAddRole = async () => { if(!newRole.code || !newRole.name) return setNotify("Vui lòng nhập", "error"); const cleanCode = newRole.code.toLowerCase().replace(/\s/g, '_'); const { error } = await supabase.from('job_roles').insert({ code: cleanCode, name: newRole.name }); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); setNewRole({ code: '', name: '' }); onRefresh(); } };
-
-    const handleDeleteRole = async (code) => { if(code === 'admin') return; if(!window.confirm(`Xóa ${code}?`)) return; const { error } = await supabase.from('job_roles').delete().eq('code', code); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-
-    const handleCloneRole = async () => {
-        if (!cloneData.from || !cloneData.toCode || !cloneData.toName) return setNotify("Thiếu thông tin nhân bản", "error");
-        const cleanToCode = cloneData.toCode.toLowerCase().replace(/\s/g, '_');
-
-        // 1. Tạo role mới
-        const { error: rErr } = await supabase.from('job_roles').insert({ code: cleanToCode, name: cloneData.toName });
-        if (rErr) return setNotify("Lỗi tạo Role: " + rErr.message, "error");
-
-        // 2. Lấy tasks cũ
-        const sourceTasks = allTasks.filter(t => t.role === cloneData.from);
-        if (sourceTasks.length === 0) return setNotify("Khu vực nguồn không có việc nào", "info");
-
-        // 3. Insert tasks mới
-        const newTasks = sourceTasks.map(t => ({
-            role: cleanToCode,
-            title: t.title,
-            time_label: t.time_label,
-            late_buffer: t.late_buffer,
-            require_input: t.require_input,
-            require_image: t.require_image,
-            sort_order: t.sort_order
-        }));
-
-        const { error: tErr } = await supabase.from('task_definitions').insert(newTasks);
-        if (tErr) setNotify("Lỗi copy việc: " + tErr.message, "error");
-        else { setNotify("Đã nhân bản thành công!"); onRefresh(); setCloneData({ from: '', toCode: '', toName: '' }); }
+    const setNotify = (msg, type = 'success') => {
+        setNotification({ msg, type });
+        setTimeout(() => setNotification({ msg: '', type: '' }), 5000);
     };
 
+    const fetchAllDataAdmin = async () => {
+        const today = getTodayISO();
+
+        // Fetch users
+        const { data: uData } = await supabase.from('app_users').select('*').order('created_at');
+        setUsersList(uData || []);
+
+        // Fetch roles
+        const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
+        setRolesList(rData || []);
+
+        // Fetch tasks - Sắp xếp ưu tiên theo time_label (giờ), sau đó là sort_order
+        const { data: tData } = await supabase.from('task_definitions')
+          .select('*')
+          .order('time_label', { ascending: true })
+          .order('sort_order', { ascending: true });
+        setTasksConfig(tData || []);
+
+        // Fetch reports (logs) - Lấy tất cả báo cáo và user info (join)
+        const { data: reportData } = await supabase.from('checklist_logs')
+            .select('*, app_users(id, name, role)');
+        setReportsList(reportData || []);
+
+        // Fetch time logs
+        const { data: logData } = await supabase.from('time_logs')
+            .select('*')
+            .order('created_at', { ascending: false });
+        setTimeLogs(logData || []);
+    };
+
+    const fetchUserData = async () => {
+        if (!user) return;
+
+        // Fetch tasks
+        const { data: tData } = await supabase.from('task_definitions')
+          .select('*')
+          .eq('role', user.role)
+          .order('time_label', { ascending: true })
+          .order('sort_order', { ascending: true });
+        setTasksConfig(tData || []);
+
+        // Fetch today's report
+        const today = getTodayISO();
+        const { data: reportData } = await supabase.from('checklist_logs')
+            .select('*, app_users(id, name, role)')
+            .eq('report_date', today)
+            .eq('user_id', user.id);
+        setReportsList(reportData || []);
+
+        // Fetch all roles for display
+        const { data: rData } = await supabase.from('job_roles').select('*');
+        setRolesList(rData || []);
+    };
+
+    const handleRefresh = () => {
+        setLoading(true);
+        if (user && user.role === 'admin') {
+            fetchAllDataAdmin().finally(() => setLoading(false));
+        } else if (user) {
+            fetchUserData().finally(() => setLoading(false));
+        } else {
+             setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        const storedUser = localStorage.getItem('currentUser');
+        if (storedUser) {
+            setUser(JSON.parse(storedUser));
+        }
+    }, []);
+
+    useEffect(() => {
+        handleRefresh();
+    }, [user]);
+
+    const handleLogin = (userData) => {
+        setUser(userData);
+        localStorage.setItem('currentUser', JSON.stringify(userData));
+    };
+
+    const handleLogout = () => {
+        setUser(null);
+        localStorage.removeItem('currentUser');
+        setNotify("Đã đăng xuất.", "info");
+    };
+
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-slate-100">
+                <Loader2 className="animate-spin text-blue-600" size={48}/>
+            </div>
+        );
+    }
+
+    if (!user) {
+        return <ModernLogin onLogin={handleLogin} setNotify={setNotify} />;
+    }
+
     return (
-        <div className="space-y-8">
-            {/* THÊM MỚI */}
-            <div>
-                <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Thêm Khu Vực Mới</h3>
-                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex gap-3">
-                    <input className="p-2 rounded border border-amber-200 text-sm flex-1" placeholder="Mã (vd: be_boi)" value={newRole.code} onChange={e => setNewRole({...newRole, code: e.target.value})}/>
-                    <input className="p-2 rounded border border-amber-200 text-sm flex-[2]" placeholder="Tên (vd: Bể Bơi)" value={newRole.name} onChange={e => setNewRole({...newRole, name: e.target.value})}/>
-                    <button onClick={handleAddRole} className="bg-amber-600 text-white px-4 rounded font-bold hover:bg-amber-700 text-sm">Thêm</button>
-                </div>
-            </div>
+        <>
+            <CustomStyles />
+            <Notification notification={notification} />
+            {user.role === 'admin' ? (
+                <AdminDashboard
+                    users={usersList}
+                    roles={rolesList}
+                    allTasks={tasksConfig}
+                    reports={reportsList}
+                    timeLogs={timeLogs}
+                    onRefresh={handleRefresh}
+                    onLogout={handleLogout}
+                    setNotify={setNotify}
+                />
+            ) : (
+                <UserDashboard
+                    user={user}
+                    tasks={tasksConfig}
+                    reports={reportsList}
+                    roles={rolesList}
+                    onLogout={handleLogout}
+                    onRefresh={handleRefresh}
+                    setNotify={setNotify}
+                />
+            )}
+        </>
+    );
+};
 
-            {/* NHÂN BẢN */}
-            <div>
-                 <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Copy Cấu Hình (Nhân Bản)</h3>
-                 <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <select className="p-2 rounded border border-blue-200 text-sm" value={cloneData.from} onChange={e => setCloneData({...cloneData, from: e.target.value})}>
-                        <option value="">-- Sao chép từ --</option>
-                        {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-                    </select>
-                    <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Mã Mới (vd: be_boi_2)" value={cloneData.toCode} onChange={e => setCloneData({...cloneData, toCode: e.target.value})}/>
-                    <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Tên Mới (vd: Bể Bơi 2)" value={cloneData.toName} onChange={e => setCloneData({...cloneData, toName: e.target.value})}/>
-                    <button onClick={handleCloneRole} className="bg-blue-600 text-white px-4 rounded font-bold hover:bg-blue-700 text-sm flex items-center justify-center gap-2"><Copy size={16}/> Nhân bản</button>
-                 </div>
-            </div>
-
-            {/* DANH SÁCH */}
-            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm text-left">
-                    <tbody className="divide-y divide-slate-100">
-                        {roles.map(r => (
-                            <tr key={r.code} className="hover:bg-slate-50">
-                                <td className="p-4 font-mono text-slate-500">{r.code}</td>
-                                <td className="p-4 font-bold text-slate-700">{r.name}</td>
-                                <td className="p-4 text-right"><button onClick={() => handleDeleteRole(r.code)} className="text-red-400 p-2"><Trash2 size={16}/></button></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    )
-}
-
-const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
-  const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '' });
-  useEffect(() => { if(roles.length > 0 && !newUser.role) setNewUser(prev => ({...prev, role: roles[0].code})); }, [roles]);
-
-  const handleAddUser = async () => { if(!newUser.username || !newUser.password) return setNotify("Thiếu thông tin", "error"); const roleToSave = newUser.role || 'staff'; const { error } = await supabase.from('app_users').insert({...newUser, role: roleToSave}); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); onRefresh(); } };
-  const handleDeleteUser = async (id) => { if(!window.confirm("Xóa user?")) return; const { error } = await supabase.from('app_users').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-
-  return (
-    <div className="space-y-6">
-        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col md:flex-row gap-3">
-            <input className="p-2 rounded border border-blue-200 text-sm" placeholder="User" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})}/>
-            <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Pass" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})}/>
-            <input className="p-2 rounded border border-blue-200 text-sm flex-1" placeholder="Họ Tên" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})}/>
-            <select className="p-2 rounded border border-blue-200 text-sm" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
-                <option value="admin">Quản lý (Admin)</option>
-                {roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select>
-            <button onClick={handleAddUser} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 text-sm">Thêm</button>
-        </div>
-        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-            <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
-                    <tr>
-                        <th className="p-4">Họ Tên</th>
-                        <th className="p-4">Username</th>
-                        <th className="p-4 text-red-400">Password</th> {/* Đã hiển thị password */}
-                        <th className="p-4">Vai trò</th>
-                        <th className="p-4 text-right">Xóa</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {users.map(u => (
-                        <tr key={u.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-bold text-slate-700">{u.name}</td>
-                            <td className="p-4 text-slate-500">{u.username}</td>
-                            <td className="p-4 text-red-500 font-mono">{u.password}</td>
-                            <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs">{u.role}</span></td>
-                            <td className="p-4 text-right"><button onClick={() => handleDeleteUser(u.id)} className="text-red-500 p-2"><Trash2 size={16}/></button></td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    </div>
-  )
-}
-
-const ModernLogin = ({ loginForm, setLoginForm, handleLogin, loading, notification }) => (
-  <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4"><div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100"><div className="text-center mb-8"><div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white mb-4 shadow-lg shadow-blue-500/30"><ShieldCheck size={32}/></div><h1 className="text-2xl font-bold text-slate-800">Đăng Nhập Hệ Thống</h1></div><div className="space-y-4"><div className="relative"><User className="absolute left-4 top-3.5 text-slate-400" size={20}/><input type="text" placeholder="Tên đăng nhập" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})}/></div><div className="relative"><Lock className="absolute left-4 top-3.5 text-slate-400" size={20}/><input type="password" placeholder="Mật khẩu" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleLogin()}/></div>{notification.msg && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{notification.msg}</div>}<button onClick={handleLogin} disabled={loading} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 flex justify-center">{loading ? <Loader2 className="animate-spin"/> : 'Vào ca làm việc'}</button></div></div></div>
-);
+export default App;
