@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle, ExternalLink,
-  Edit3, ArrowUp, ArrowDown, Copy, Key, Save, XCircle
+  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign
 } from 'lucide-react';
 
 // --- STYLES CHO HIỆU ỨNG NHẤP NHÁY ---
@@ -37,7 +37,6 @@ const showNotify = (setter, msg, type = 'success') => {
   setTimeout(() => setter({ msg: '', type: '' }), 3000);
 };
 
-// Hàm lấy vị trí GPS (Cải thiện timeout để tránh treo)
 const getCurrentLocation = () => {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -45,16 +44,11 @@ const getCurrentLocation = () => {
     } else {
       const options = {
         enableHighAccuracy: true,
-        timeout: 10000, // 10 giây timeout
+        timeout: 10000,
         maximumAge: 0
       };
       navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
+        (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
         (error) => {
           let msg = "Không thể lấy vị trí.";
           if (error.code === 1) msg = "Bạn đã chặn quyền truy cập vị trí.";
@@ -74,10 +68,18 @@ const checkIsLate = (timeLabel, bufferMins = 0, isDone = false) => {
   const [h, m] = timeLabel.split(':').map(Number);
   const taskTime = new Date();
   taskTime.setHours(h, m, 0, 0);
-  // Nếu bufferMins chưa có giá trị, mặc định là 0
   const buffer = parseInt(bufferMins) || 0;
   const deadline = new Date(taskTime.getTime() + (buffer * 60000));
   return now > deadline;
+};
+
+// Hàm hỗ trợ sắp xếp công việc theo giờ
+const sortTasksByTime = (tasks) => {
+    return tasks.sort((a, b) => {
+        const timeA = a.time_label || '23:59';
+        const timeB = b.time_label || '23:59';
+        return timeA.localeCompare(timeB);
+    });
 };
 
 // --- COMPONENT CHÍNH ---
@@ -97,10 +99,6 @@ export default function App() {
   const [notification, setNotification] = useState({ msg: '', type: '' });
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
-
-  useEffect(() => {
-    // Auto refresh timer if needed
-  }, []);
 
   // --- LOGIC ---
   const handleLogin = async () => {
@@ -145,7 +143,8 @@ export default function App() {
   }
 
   const fetchTasksConfig = async (role) => {
-    const { data } = await supabase.from('task_definitions').select('*').eq('role', role).order('sort_order', { ascending: true });
+    // Sắp xếp mặc định theo time_label từ Server
+    const { data } = await supabase.from('task_definitions').select('*').eq('role', role).order('time_label', { ascending: true });
     if(data) setTasksConfig(data);
   };
 
@@ -157,21 +156,19 @@ export default function App() {
 
   const fetchAllDataAdmin = async () => {
     const today = getTodayISO();
-    // Fetch users
     const { data: uData } = await supabase.from('app_users').select('*').order('created_at');
     setUsersList(uData || []);
-    // Fetch roles
     const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
     setRolesList(rData || []);
-    // Fetch tasks sorted by sort_order
-    const { data: tData } = await supabase.from('task_definitions').select('*').order('sort_order', { ascending: true });
+    // Sửa logic: Lấy task và sort luôn theo time_label
+    const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
     setTasksConfig(tData || []);
-    // Fetch reports
+
     const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
     const reportMap = {};
     if(repData) repData.forEach(r => reportMap[r.role] = r.data);
     setChecklistData(reportMap);
-    // Fetch logs
+
     const { data: logData } = await supabase.from('time_logs')
         .select('*, app_users(name, role)')
         .eq('report_date', today)
@@ -184,7 +181,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       <CustomStyles />
-      {/* Change Pass Modal */}
       {showChangePass && (
         <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
            <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl">
@@ -266,7 +262,7 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS (Đã fix lỗi treo màn hình GPS + Alert nhấp nháy)
+// STAFF COMPONENTS
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
@@ -319,7 +315,6 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
          checkAttendanceStatus();
 
       } catch (err) {
-         console.error(err);
          setNotify(err.message || "Lỗi. Hãy kiểm tra GPS và mạng.", "error");
       } finally {
          setAttLoading(false);
@@ -379,7 +374,6 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 
     return (
       <div className="space-y-6">
-        {/* Progress Bar */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
            <div className="flex justify-between items-end mb-2">
               <span className="font-bold text-slate-700">Tiến độ hôm nay</span>
@@ -391,7 +385,6 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
            <p className="text-xs text-slate-400 mt-2 text-right">{completedTasks}/{totalTasks} công việc đã gửi</p>
         </div>
 
-        {/* Check In/Out */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
            <div><h2 className="text-xl font-bold text-slate-800">Chấm công</h2><p className="text-slate-500 text-sm">Chụp ảnh để vào/ra ca</p></div>
 
@@ -422,15 +415,7 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
             const item = reportData[task.id] || {};
             const isDone = item.done; const isSent = item.sent;
             const isLate = checkIsLate(task.time_label, task.late_buffer, isDone);
-
-            // Xử lý class nhấp nháy nếu trễ và chưa làm xong
-            const cardClass = isSent
-                ? 'border-emerald-100 bg-emerald-50/20'
-                : (isLate && !isDone)
-                    ? 'urgent-blink text-red-800' // Class urgent-blink định nghĩa ở trên
-                    : isDone
-                        ? 'border-blue-100 bg-white'
-                        : 'border-transparent shadow-sm bg-white';
+            const cardClass = isSent ? 'border-emerald-100 bg-emerald-50/20' : (isLate && !isDone) ? 'urgent-blink text-red-800' : isDone ? 'border-blue-100 bg-white' : 'border-transparent shadow-sm bg-white';
 
             return (
                <div key={task.id} className={`p-4 rounded-xl border-2 transition-all ${cardClass}`}>
@@ -470,12 +455,20 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
   return (
     <div>
       <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1 overflow-x-auto">
-        {[ {id: 'timesheet', icon: CalendarClock, label: 'Chấm Công & Định Vị'}, {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ'}, {id: 'users', icon: Users, label: 'Nhân Sự'}, {id: 'tasks', icon: ListTodo, label: 'Cấu Hình'}, {id: 'roles', icon: Briefcase, label: 'Khu Vực'} ].map(t => (
+        {[
+           {id: 'timesheet', icon: CalendarClock, label: 'Giám Sát Hôm Nay'},
+           {id: 'statistics', icon: BarChart3, label: 'Thống Kê & Lương'},
+           {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ'},
+           {id: 'users', icon: Users, label: 'Nhân Sự'},
+           {id: 'tasks', icon: ListTodo, label: 'Cấu Hình Việc'},
+           {id: 'roles', icon: Briefcase, label: 'Khu Vực'}
+        ].map(t => (
            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm whitespace-nowrap transition-all border-b-2 ${tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><t.icon size={18}/> {t.label}</button>
         ))}
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
       {tab === 'timesheet' && <AdminTimesheet timeLogs={timeLogs} users={users} />}
+      {tab === 'statistics' && <AdminStatistics users={users} roles={roles} />}
       {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -484,7 +477,204 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
   );
 };
 
-// --- CÁC COMPONENT CON CỦA ADMIN ---
+// --- ADMIN STATISTICS COMPONENT (NEW) ---
+const AdminStatistics = ({ users, roles }) => {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [filterRole, setFilterRole] = useState('');
+  const [stats, setStats] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const calculateStats = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch Time Logs for the month
+      const { data: logs } = await supabase.from('time_logs')
+        .select('*')
+        .ilike('report_date', `${month}%`);
+
+      // 2. Fetch Checklist Logs for the month
+      const { data: checkLists } = await supabase.from('checklist_logs')
+        .select('*')
+        .ilike('report_date', `${month}%`);
+
+      // 3. Process Data per User
+      const processed = users.map(user => {
+        if (filterRole && user.role !== filterRole) return null;
+
+        // --- Work Hours Calculation ---
+        const userLogs = logs ? logs.filter(l => l.user_id === user.id) : [];
+        // Group logs by date
+        const logsByDate = {};
+        userLogs.forEach(l => {
+           if(!logsByDate[l.report_date]) logsByDate[l.report_date] = [];
+           logsByDate[l.report_date].push(l);
+        });
+
+        let totalMillis = 0;
+        let workDays = 0;
+
+        Object.keys(logsByDate).forEach(date => {
+           const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
+           const checkIn = dayLogs.find(l => l.action_type === 'check_in');
+           const checkOut = dayLogs.reverse().find(l => l.action_type === 'check_out'); // Find last checkout
+
+           if(checkIn && checkOut && new Date(checkOut.log_time) > new Date(checkIn.log_time)) {
+              totalMillis += (new Date(checkOut.log_time) - new Date(checkIn.log_time));
+              workDays++;
+           } else if (checkIn) {
+              // Only checkin, no checkout -> Count as day worked but 0 hours or default?
+              // For now, let's count day but 0 hours to alert admin
+              workDays++;
+           }
+        });
+
+        const totalHours = (totalMillis / (1000 * 60 * 60)).toFixed(1);
+
+        // --- Task Completion Calculation ---
+        // Find all checklists submitted by this user's role (Assumption: User sticks to role)
+        // Or better: Filter checklist_logs where role == user.role
+        const userChecklists = checkLists ? checkLists.filter(c => c.role === user.role) : [];
+        let totalTasksAssigned = 0;
+        let totalTasksDone = 0;
+
+        userChecklists.forEach(cl => {
+           const tasks = Object.values(cl.data || {});
+           totalTasksAssigned += tasks.length;
+           totalTasksDone += tasks.filter(t => t.sent).length;
+        });
+
+        const completionRate = totalTasksAssigned === 0 ? 0 : Math.round((totalTasksDone / totalTasksAssigned) * 100);
+
+        return {
+           id: user.id,
+           name: user.name,
+           role: user.role,
+           workDays,
+           totalHours,
+           completionRate
+        };
+      }).filter(Boolean);
+
+      setStats(processed);
+
+    } catch (error) {
+      console.error(error);
+      alert("Lỗi tải thống kê");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+     calculateStats();
+  }, [month, filterRole]);
+
+  return (
+    <div className="space-y-6">
+       {/* Filter Bar */}
+       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center">
+          <div className="flex items-center gap-2">
+             <CalendarClock className="text-blue-600"/>
+             <span className="font-bold text-slate-700">Tháng:</span>
+             <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold text-slate-700 bg-slate-50 outline-none focus:ring-2 ring-blue-500"/>
+          </div>
+          <div className="flex items-center gap-2 w-full md:w-auto">
+             <Briefcase className="text-slate-400" size={18}/>
+             <select className="border rounded-lg px-3 py-2 text-sm w-full md:w-48 outline-none" value={filterRole} onChange={e => setFilterRole(e.target.value)}>
+                <option value="">-- Tất cả khu vực --</option>
+                {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
+             </select>
+          </div>
+          <button onClick={calculateStats} className="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center gap-2">
+             {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Cập nhật
+          </button>
+       </div>
+
+       {/* Overview Cards */}
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+             <div className="flex justify-between items-start mb-2">
+                 <div>
+                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Làm</p>
+                    <h3 className="text-2xl font-bold text-slate-800">{stats.reduce((acc, curr) => acc + parseFloat(curr.totalHours), 0).toFixed(1)}h</h3>
+                 </div>
+                 <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Clock size={20}/></div>
+             </div>
+          </div>
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+             <div className="flex justify-between items-start mb-2">
+                 <div>
+                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Ngày Công</p>
+                    <h3 className="text-2xl font-bold text-slate-800">{stats.reduce((acc, curr) => acc + curr.workDays, 0)} ngày</h3>
+                 </div>
+                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><CalendarClock size={20}/></div>
+             </div>
+          </div>
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+             <div className="flex justify-between items-start mb-2">
+                 <div>
+                    <p className="text-slate-400 text-xs font-bold uppercase">Hiệu Suất TB</p>
+                    <h3 className="text-2xl font-bold text-slate-800">
+                        {stats.length > 0 ? Math.round(stats.reduce((acc, curr) => acc + curr.completionRate, 0) / stats.length) : 0}%
+                    </h3>
+                 </div>
+                 <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><TrendingUp size={20}/></div>
+             </div>
+          </div>
+       </div>
+
+       {/* Detailed Table */}
+       <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+             <h3 className="font-bold text-slate-700">Bảng Chi Tiết Nhân Sự</h3>
+          </div>
+          <div className="overflow-x-auto">
+             <table className="w-full text-sm text-left">
+                <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
+                   <tr>
+                      <th className="p-4">Nhân Viên</th>
+                      <th className="p-4">Khu Vực</th>
+                      <th className="p-4 text-center">Số Ngày Làm</th>
+                      <th className="p-4 text-center">Tổng Giờ (h)</th>
+                      <th className="p-4">Hoàn Thành Việc</th>
+                      <th className="p-4 text-right">Hành động</th>
+                   </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                   {stats.length === 0 ? (
+                      <tr><td colSpan="6" className="p-8 text-center text-slate-400">Không có dữ liệu cho tháng này</td></tr>
+                   ) : (
+                      stats.map(s => (
+                         <tr key={s.id} className="hover:bg-slate-50">
+                            <td className="p-4 font-bold text-slate-700">{s.name}</td>
+                            <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{s.role}</span></td>
+                            <td className="p-4 text-center font-bold">{s.workDays}</td>
+                            <td className="p-4 text-center text-blue-600 font-bold">{s.totalHours}</td>
+                            <td className="p-4">
+                               <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-2 bg-slate-100 rounded-full max-w-[100px]">
+                                     <div className={`h-2 rounded-full ${s.completionRate >= 80 ? 'bg-emerald-500' : s.completionRate >= 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{width: `${s.completionRate}%`}}></div>
+                                  </div>
+                                  <span className="text-xs font-bold">{s.completionRate}%</span>
+                               </div>
+                            </td>
+                            <td className="p-4 text-right">
+                               <button className="text-blue-600 hover:bg-blue-50 p-2 rounded text-xs font-bold flex items-center gap-1 ml-auto">
+                                  <DollarSign size={14}/> Tính Lương
+                               </button>
+                            </td>
+                         </tr>
+                      ))
+                   )}
+                </tbody>
+             </table>
+          </div>
+       </div>
+    </div>
+  )
+};
+
+// --- CÁC COMPONENT CON KHÁC CỦA ADMIN ---
 const AdminTimesheet = ({ timeLogs, users }) => {
     return (
         <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
@@ -503,7 +693,7 @@ const AdminTimesheet = ({ timeLogs, users }) => {
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                    {timeLogs.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-slate-400">Chưa có dữ liệu</td></tr>}
+                    {timeLogs.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-slate-400">Chưa có dữ liệu hôm nay</td></tr>}
                     {timeLogs.map((log) => (
                         <tr key={log.id} className="hover:bg-slate-50">
                             <td className="p-4 font-mono text-slate-500">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</td>
@@ -540,13 +730,16 @@ const AdminTimesheet = ({ timeLogs, users }) => {
 }
 
 const AdminReports = ({ reports, allTasks, roles }) => {
-   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(allTasks.map(t => t.role))];
+   // Sắp xếp task theo giờ trước khi hiển thị
+   const sortedTasks = sortTasksByTime([...allTasks]);
+   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
+
    return (
      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
        {roleKeys.map(roleKey => {
           const roleObj = roles.find(r => r.code === roleKey);
           const roleName = roleObj ? roleObj.name : roleKey;
-          const roleTasks = allTasks.filter(t => t.role === roleKey);
+          const roleTasks = sortedTasks.filter(t => t.role === roleKey);
           if (roleTasks.length === 0 && !roleObj) return null;
           const roleReport = reports[roleKey] || {};
           const sentCount = Object.values(roleReport).filter(i => i.sent).length;
@@ -561,7 +754,6 @@ const AdminReports = ({ reports, allTasks, roles }) => {
                    {roleTasks.map(task => {
                       const item = roleReport[task.id];
                       const isLate = checkIsLate(task.time_label, task.late_buffer, item?.sent);
-                      // Hiển thị nội dung công việc giống với bên nhân viên để đồng nhất
                       if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
                       return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
                    })}
@@ -574,21 +766,21 @@ const AdminReports = ({ reports, allTasks, roles }) => {
 }
 
 const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
-  const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
-  const [moveLoading, setMoveLoading] = useState(false);
-  const formRef = useRef(null); // Ref để cuộn trang
+  // Bỏ sort_order, dùng logic sắp xếp theo time
+  const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
+  const formRef = useRef(null);
 
   useEffect(() => {
-      // Chỉ set mặc định khi chưa có editing.role và không đang ở chế độ edit
       if(roles.length > 0 && !editing.role && !editing.id) {
           setEditing(prev => ({...prev, role: roles[0].code}));
       }
   }, [roles]);
 
-  const resetForm = () => setEditing({ id: null, role: roles[0]?.code || '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false, sort_order: 1 });
+  const resetForm = () => setEditing({ id: null, role: roles[0]?.code || '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
 
   const handleSaveTask = async () => {
      if(!editing.title) return setNotify("Chưa nhập tên việc", "error");
+     // Sort Order không còn quan trọng, có thể để 0 hoặc auto-increment nếu muốn, nhưng ở đây ta sort theo time_label
      const payload = {
          role: editing.role, title: editing.title, time_label: editing.time_label,
          late_buffer: editing.late_buffer, require_input: editing.require_input,
@@ -596,57 +788,23 @@ const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
      };
 
      if (editing.id) {
-         // Update
          const { error } = await supabase.from('task_definitions').update(payload).eq('id', editing.id);
          if(error) setNotify("Lỗi cập nhật", "error"); else { setNotify("Đã cập nhật"); onRefresh(); resetForm(); }
      } else {
-         // Create new (get max order first)
-         const maxOrder = allTasks.filter(t => t.role === editing.role).length + 1;
-         const { error } = await supabase.from('task_definitions').insert({...payload, sort_order: maxOrder});
+         const { error } = await supabase.from('task_definitions').insert(payload);
          if(error) setNotify("Lỗi tạo việc", "error"); else { setNotify("Đã thêm công việc"); onRefresh(); resetForm(); }
      }
   };
 
   const handleEdit = (task) => {
-      // Sửa lỗi Edit: Set toàn bộ state và cuộn lên đầu
       setEditing({ ...task });
-      if(formRef.current) {
-          formRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      if(formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const handleDeleteTask = async (id) => { if(!window.confirm("Xóa việc này?")) return; const { error } = await supabase.from('task_definitions').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
 
-  // Logic đổi vị trí (Swap Order) - Đã cải thiện
-  const handleMove = async (task, direction) => {
-      if (moveLoading) return;
-      setMoveLoading(true);
-
-      const roleTasks = allTasks.filter(t => t.role === task.role).sort((a,b) => a.sort_order - b.sort_order);
-      const index = roleTasks.findIndex(t => t.id === task.id);
-
-      if ((direction === 'up' && index === 0) || (direction === 'down' && index === roleTasks.length - 1)) {
-          setMoveLoading(false);
-          return;
-      }
-
-      const swapTask = direction === 'up' ? roleTasks[index - 1] : roleTasks[index + 1];
-
-      try {
-          // Swap values
-          await supabase.from('task_definitions').update({ sort_order: swapTask.sort_order }).eq('id', task.id);
-          await supabase.from('task_definitions').update({ sort_order: task.sort_order }).eq('id', swapTask.id);
-          await onRefresh(); // Chờ refresh xong mới cho bấm tiếp
-      } catch (err) {
-          setNotify("Lỗi sắp xếp", "error");
-      } finally {
-          setMoveLoading(false);
-      }
-  };
-
   return (
      <div className="space-y-6">
-        {/* Form Nhập Liệu - Có ref để scroll tới */}
         <div ref={formRef} className={`p-4 rounded-xl border grid grid-cols-2 md:grid-cols-6 gap-3 transition-all ${editing.id ? 'bg-orange-50 border-orange-200 shadow-lg ring-2 ring-orange-100' : 'bg-indigo-50 border-indigo-100'}`}>
            {editing.id && <div className="col-span-2 md:col-span-6 text-orange-700 font-bold flex items-center gap-2 mb-2"><Edit3 size={16}/> Đang chỉnh sửa: {editing.title}</div>}
 
@@ -663,22 +821,22 @@ const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
 
         <div className="space-y-4">
             {roles.map(role => {
-                const tasks = allTasks.filter(t => t.role === role.code);
+                // Sắp xếp task theo giờ
+                const tasks = sortTasksByTime(allTasks.filter(t => t.role === role.code));
                 if(tasks.length === 0) return null;
                 return (
                     <div key={role.code} className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
                         <div className="bg-slate-50 p-3 border-b border-slate-100 font-bold text-slate-700 flex justify-between">{role.name} <span className="text-xs font-normal bg-white border px-2 rounded flex items-center">{role.code}</span></div>
-                        {tasks.map((t, idx) => (
+                        {tasks.map((t) => (
                             <div key={t.id} className={`p-3 border-b border-slate-50 last:border-0 flex items-center justify-between hover:bg-slate-50 ${editing.id === t.id ? 'bg-orange-50' : ''}`}>
                                 <div className="flex items-center gap-3">
-                                    <div className="flex flex-col gap-1">
-                                        <button onClick={() => handleMove(t, 'up')} disabled={idx === 0 || moveLoading} className="text-slate-300 hover:text-blue-600 disabled:opacity-0 p-1 hover:bg-slate-100 rounded"><ArrowUp size={16}/></button>
-                                        <button onClick={() => handleMove(t, 'down')} disabled={idx === tasks.length - 1 || moveLoading} className="text-slate-300 hover:text-blue-600 disabled:opacity-0 p-1 hover:bg-slate-100 rounded"><ArrowDown size={16}/></button>
+                                    <div className="w-10 text-center text-xs font-bold text-blue-600 bg-blue-50 py-1 rounded">
+                                        {t.time_label || '00:00'}
                                     </div>
                                     <div>
                                         <p className="font-bold text-sm text-slate-700">{t.title}</p>
                                         <p className="text-xs text-slate-400">
-                                            {t.time_label ? `⏰ ${t.time_label}` : 'Không giờ'} (+{t.late_buffer}p)
+                                            Cho phép trễ {t.late_buffer}p
                                             {t.require_input && ' • 🔢 Nhập số'}
                                             {t.require_image && ' • 📸 Chụp ảnh'}
                                         </p>
@@ -710,23 +868,20 @@ const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
         if (!cloneData.from || !cloneData.toCode || !cloneData.toName) return setNotify("Thiếu thông tin nhân bản", "error");
         const cleanToCode = cloneData.toCode.toLowerCase().replace(/\s/g, '_');
 
-        // 1. Tạo role mới
         const { error: rErr } = await supabase.from('job_roles').insert({ code: cleanToCode, name: cloneData.toName });
         if (rErr) return setNotify("Lỗi tạo Role: " + rErr.message, "error");
 
-        // 2. Lấy tasks cũ
         const sourceTasks = allTasks.filter(t => t.role === cloneData.from);
         if (sourceTasks.length === 0) return setNotify("Khu vực nguồn không có việc nào", "info");
 
-        // 3. Insert tasks mới
         const newTasks = sourceTasks.map(t => ({
             role: cleanToCode,
             title: t.title,
             time_label: t.time_label,
             late_buffer: t.late_buffer,
             require_input: t.require_input,
-            require_image: t.require_image,
-            sort_order: t.sort_order
+            require_image: t.require_image
+            // sort_order bỏ, ko cần copy
         }));
 
         const { error: tErr } = await supabase.from('task_definitions').insert(newTasks);
@@ -736,7 +891,6 @@ const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
 
     return (
         <div className="space-y-8">
-            {/* THÊM MỚI */}
             <div>
                 <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Thêm Khu Vực Mới</h3>
                 <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex gap-3">
@@ -746,7 +900,6 @@ const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
                 </div>
             </div>
 
-            {/* NHÂN BẢN */}
             <div>
                  <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Copy Cấu Hình (Nhân Bản)</h3>
                  <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -760,7 +913,6 @@ const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
                  </div>
             </div>
 
-            {/* DANH SÁCH */}
             <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
                 <table className="w-full text-sm text-left">
                     <tbody className="divide-y divide-slate-100">
@@ -802,7 +954,7 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
                     <tr>
                         <th className="p-4">Họ Tên</th>
                         <th className="p-4">Username</th>
-                        <th className="p-4 text-red-400">Password</th> {/* Đã hiển thị password */}
+                        <th className="p-4 text-red-400">Password</th>
                         <th className="p-4">Vai trò</th>
                         <th className="p-4 text-right">Xóa</th>
                     </tr>
