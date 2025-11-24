@@ -62,18 +62,31 @@ const getCurrentLocation = () => {
   });
 };
 
-const checkIsLate = (timeLabel, bufferMins = 0, isDone = false) => {
+// Hàm kiểm tra đến giờ chưa (Dùng để báo động)
+// Logic: Nếu giờ hiện tại >= giờ cài đặt -> True (Cần làm ngay)
+const checkIsDue = (timeLabel, isDone = false) => {
   if (isDone || !timeLabel || !timeLabel.includes(':')) return false;
   const now = new Date();
   const [h, m] = timeLabel.split(':').map(Number);
   const taskTime = new Date();
-  taskTime.setHours(h, m, 0, 0);
-  const buffer = parseInt(bufferMins) || 0;
-  const deadline = new Date(taskTime.getTime() + (buffer * 60000));
-  return now > deadline;
+  taskTime.setHours(h, m, 0, 0); // Set giờ của việc
+
+  // So sánh: Nếu hiện tại lớn hơn hoặc bằng giờ việc -> Đến giờ rồi!
+  return now >= taskTime;
 };
 
-// Hàm hỗ trợ sắp xếp công việc theo giờ
+// Hàm kiểm tra trễ hẳn (để hiển thị text 'Trễ' nếu vượt quá buffer)
+const checkIsLateWithBuffer = (timeLabel, bufferMins = 0, isDone = false) => {
+    if (isDone || !timeLabel || !timeLabel.includes(':')) return false;
+    const now = new Date();
+    const [h, m] = timeLabel.split(':').map(Number);
+    const taskTime = new Date();
+    taskTime.setHours(h, m, 0, 0);
+    const buffer = parseInt(bufferMins) || 0;
+    const deadline = new Date(taskTime.getTime() + (buffer * 60000));
+    return now > deadline;
+}
+
 const sortTasksByTime = (tasks) => {
     return tasks.sort((a, b) => {
         const timeA = a.time_label || '23:59';
@@ -143,7 +156,6 @@ export default function App() {
   }
 
   const fetchTasksConfig = async (role) => {
-    // Sắp xếp mặc định theo time_label từ Server
     const { data } = await supabase.from('task_definitions').select('*').eq('role', role).order('time_label', { ascending: true });
     if(data) setTasksConfig(data);
   };
@@ -160,7 +172,6 @@ export default function App() {
     setUsersList(uData || []);
     const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
     setRolesList(rData || []);
-    // Sửa logic: Lấy task và sort luôn theo time_label
     const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
     setTasksConfig(tData || []);
 
@@ -262,14 +273,27 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS
+// STAFF COMPONENTS (Sửa logic nhấp nháy tại đây)
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
     const [loadingSend, setLoadingSend] = useState(null);
     const [attLoading, setAttLoading] = useState(false);
 
-    useEffect(() => { checkAttendanceStatus(); }, []);
+    // State "tick" để ép giao diện cập nhật mỗi 30s
+    const [, setTick] = useState(0);
+
+    useEffect(() => {
+        checkAttendanceStatus();
+
+        // Tạo bộ đếm thời gian: Mỗi 30 giây cập nhật giao diện 1 lần
+        // Để đảm bảo "CheckIsDue" luôn được tính lại
+        const timer = setInterval(() => {
+            setTick(t => t + 1);
+        }, 30000);
+
+        return () => clearInterval(timer);
+    }, []);
 
     const checkAttendanceStatus = async () => {
       const today = getTodayISO();
@@ -413,23 +437,40 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
         <div className="grid gap-4">
           {tasks.map((task) => {
             const item = reportData[task.id] || {};
-            const isDone = item.done; const isSent = item.sent;
-            const isLate = checkIsLate(task.time_label, task.late_buffer, isDone);
-            const cardClass = isSent ? 'border-emerald-100 bg-emerald-50/20' : (isLate && !isDone) ? 'urgent-blink text-red-800' : isDone ? 'border-blue-100 bg-white' : 'border-transparent shadow-sm bg-white';
+            const isDone = item.done;
+            const isSent = item.sent;
+
+            // SỬA: Dùng checkIsDue để báo động NHẤP NHÁY ngay khi đến giờ
+            const isDue = checkIsDue(task.time_label, isDone);
+            // SỬA: Dùng checkIsLateWithBuffer để hiển thị chữ "Trễ" nếu quá hạn
+            const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, isDone);
+
+            // LOGIC MÀU SẮC:
+            // 1. Đã gửi -> Xanh lá nhạt
+            // 2. Đến giờ (isDue) và chưa xong -> ĐỎ NHẤP NHÁY
+            // 3. Đã xong nhưng chưa gửi -> Xanh dương
+            // 4. Bình thường -> Trắng
+            const cardClass = isSent
+                ? 'border-emerald-100 bg-emerald-50/20'
+                : (isDue && !isDone) // Thay đổi ở đây: Đến giờ là nháy ngay
+                    ? 'urgent-blink text-red-800'
+                    : isDone
+                        ? 'border-blue-100 bg-white'
+                        : 'border-transparent shadow-sm bg-white';
 
             return (
                <div key={task.id} className={`p-4 rounded-xl border-2 transition-all ${cardClass}`}>
                   <div className="flex flex-col md:flex-row md:items-center gap-4">
                      <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => !isSent && handleTaskAction(task.id, 'toggle')}>
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isDone ? (isSent ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600') : (isLate ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-300')}`}>{isLate && !isDone ? <AlertTriangle size={20}/> : <CheckCircle2 size={20}/>}</div>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isDone ? (isSent ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600') : (isDue ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-300')}`}>{isDue && !isDone ? <AlertTriangle size={20}/> : <CheckCircle2 size={20}/>}</div>
                         <div>
                            <div className="flex items-center gap-2 text-xs mb-1">
-                               <span className={`font-bold px-2 py-0.5 rounded ${isLate && !isDone ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                                   {task.time_label} {isLate && !isDone ? '(TRỄ)' : ''}
+                               <span className={`font-bold px-2 py-0.5 rounded ${isLate && !isDone ? 'bg-red-600 text-white' : (isDue && !isDone ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-500')}`}>
+                                   {task.time_label} {isLate && !isDone ? '(TRỄ)' : (isDue && !isDone ? '(ĐẾN GIỜ)' : '')}
                                </span>
                                {item.time && <span className="text-blue-600 font-medium"><Clock size={10} className="inline mr-1"/>{item.time}</span>}
                            </div>
-                           <h3 className={`font-semibold ${isLate && !isDone ? 'text-red-700' : 'text-slate-800'}`}>{task.title}</h3>
+                           <h3 className={`font-semibold ${isDue && !isDone ? 'text-red-700' : 'text-slate-800'}`}>{task.title}</h3>
                         </div>
                      </div>
                      <div className="flex flex-col sm:flex-row gap-3 items-end sm:items-center mt-2 md:mt-0 pl-12 md:pl-0">
@@ -730,7 +771,6 @@ const AdminTimesheet = ({ timeLogs, users }) => {
 }
 
 const AdminReports = ({ reports, allTasks, roles }) => {
-   // Sắp xếp task theo giờ trước khi hiển thị
    const sortedTasks = sortTasksByTime([...allTasks]);
    const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
 
@@ -753,7 +793,7 @@ const AdminReports = ({ reports, allTasks, roles }) => {
                 <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
                    {roleTasks.map(task => {
                       const item = roleReport[task.id];
-                      const isLate = checkIsLate(task.time_label, task.late_buffer, item?.sent);
+                      const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, item?.sent);
                       if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
                       return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
                    })}
@@ -766,7 +806,6 @@ const AdminReports = ({ reports, allTasks, roles }) => {
 }
 
 const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
-  // Bỏ sort_order, dùng logic sắp xếp theo time
   const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
   const formRef = useRef(null);
 
@@ -780,7 +819,6 @@ const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
 
   const handleSaveTask = async () => {
      if(!editing.title) return setNotify("Chưa nhập tên việc", "error");
-     // Sort Order không còn quan trọng, có thể để 0 hoặc auto-increment nếu muốn, nhưng ở đây ta sort theo time_label
      const payload = {
          role: editing.role, title: editing.title, time_label: editing.time_label,
          late_buffer: editing.late_buffer, require_input: editing.require_input,
@@ -821,7 +859,6 @@ const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
 
         <div className="space-y-4">
             {roles.map(role => {
-                // Sắp xếp task theo giờ
                 const tasks = sortTasksByTime(allTasks.filter(t => t.role === role.code));
                 if(tasks.length === 0) return null;
                 return (
@@ -867,13 +904,10 @@ const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
     const handleCloneRole = async () => {
         if (!cloneData.from || !cloneData.toCode || !cloneData.toName) return setNotify("Thiếu thông tin nhân bản", "error");
         const cleanToCode = cloneData.toCode.toLowerCase().replace(/\s/g, '_');
-
         const { error: rErr } = await supabase.from('job_roles').insert({ code: cleanToCode, name: cloneData.toName });
         if (rErr) return setNotify("Lỗi tạo Role: " + rErr.message, "error");
-
         const sourceTasks = allTasks.filter(t => t.role === cloneData.from);
         if (sourceTasks.length === 0) return setNotify("Khu vực nguồn không có việc nào", "info");
-
         const newTasks = sourceTasks.map(t => ({
             role: cleanToCode,
             title: t.title,
@@ -881,9 +915,7 @@ const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
             late_buffer: t.late_buffer,
             require_input: t.require_input,
             require_image: t.require_image
-            // sort_order bỏ, ko cần copy
         }));
-
         const { error: tErr } = await supabase.from('task_definitions').insert(newTasks);
         if (tErr) setNotify("Lỗi copy việc: " + tErr.message, "error");
         else { setNotify("Đã nhân bản thành công!"); onRefresh(); setCloneData({ from: '', toCode: '', toName: '' }); }
