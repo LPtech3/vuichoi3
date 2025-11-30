@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle, ExternalLink,
-  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign
+  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar
 } from 'lucide-react';
 
 // --- STYLES CHO HIỆU ỨNG NHẤP NHÁY ---
@@ -44,7 +44,7 @@ const getCurrentLocation = () => {
     } else {
       const options = {
         enableHighAccuracy: true,
-        timeout: 15000, // Tăng thời gian chờ lên 15s
+        timeout: 15000,
         maximumAge: 0
       };
       navigator.geolocation.getCurrentPosition(
@@ -62,7 +62,7 @@ const getCurrentLocation = () => {
   });
 };
 
-// --- LOGIC THỜI GIAN AN TOÀN (Sửa lỗi crash) ---
+// --- LOGIC THỜI GIAN ---
 const checkIsDue = (timeLabel, isDone = false) => {
   if (isDone || !timeLabel || typeof timeLabel !== 'string' || !timeLabel.includes(':')) return false;
   try {
@@ -168,7 +168,6 @@ export default function App() {
   };
 
   const fetchAllDataAdmin = async () => {
-    // Không set Loading true ở đây để tránh nháy màn hình khi refresh ngầm
     try {
         const today = getTodayISO();
 
@@ -260,7 +259,7 @@ export default function App() {
                 users={usersList}
                 roles={rolesList}
                 allTasks={tasksConfig}
-                reports={checklistData}
+                initialReports={checklistData} // Đổi tên prop để tránh hiểu nhầm
                 timeLogs={timeLogs}
                 onRefresh={fetchAllDataAdmin}
                 setNotify={(m, t) => showNotify(setNotification, m, t)}
@@ -282,7 +281,7 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS (Đã Fix lỗi treo khi note)
+// STAFF COMPONENTS
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
@@ -369,18 +368,15 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 
        setLoadingSend(taskDefId);
        try {
-         // Optimistic Update: Cập nhật giao diện trước
          const newItem = { ...item, sent: true };
          const newReportData = { ...reportData, [taskDefId]: newItem };
          onUpdateLocal(newReportData);
 
-         // Gửi lên server
          const { error } = await supabase.from('checklist_logs').upsert({ report_date: getTodayISO(), role: user.role, data: newReportData }, { onConflict: 'report_date, role' });
          if(error) throw error;
 
          setNotify("Đã gửi báo cáo!");
        } catch (err) {
-         // Revert nếu lỗi
          const revertedItem = { ...item, sent: false };
          onUpdateLocal({ ...reportData, [taskDefId]: revertedItem });
          setNotify("Gửi lỗi, vui lòng thử lại", "error");
@@ -494,7 +490,7 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 // ==========================================
 // ADMIN DASHBOARD
 // ==========================================
-const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, setNotify }) => {
+const AdminDashboard = ({ users, roles, allTasks, initialReports, timeLogs, onRefresh, setNotify }) => {
   const [tab, setTab] = useState('timesheet');
   return (
     <div>
@@ -514,8 +510,8 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
       </div>
       {tab === 'timesheet' && <AdminTimesheet timeLogs={timeLogs} users={users} />}
       {tab === 'statistics' && <AdminStatistics users={users} roles={roles} />}
-      {/* Truyền hàm onRefresh vào AdminReports */}
-      {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} onRefresh={onRefresh} />}
+      {/* Sửa lại: Truyền initialReports nhưng AdminReports sẽ tự quản lý ngày xem */}
+      {tab === 'reports' && <AdminReports initialReports={initialReports} allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -523,7 +519,7 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
   );
 };
 
-// --- ADMIN STATISTICS COMPONENT (FIX CRASH) ---
+// --- ADMIN STATISTICS COMPONENT (FIX LOGIC TÍNH GIỜ) ---
 const AdminStatistics = ({ users, roles }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterRole, setFilterRole] = useState('');
@@ -533,27 +529,22 @@ const AdminStatistics = ({ users, roles }) => {
   const calculateStats = async () => {
     setLoading(true);
     try {
-      // 1. Fetch Time Logs
       const { data: logsData, error: logErr } = await supabase.from('time_logs')
         .select('*')
         .ilike('report_date', `${month}%`);
+      const logs = logsData || [];
 
-      const logs = logsData || []; // FIX: Fallback to array to prevent crash
-
-      // 2. Fetch Checklist Logs
       const { data: checkData, error: checkErr } = await supabase.from('checklist_logs')
         .select('*')
         .ilike('report_date', `${month}%`);
-
-      const checkLists = checkData || []; // FIX: Fallback to array
+      const checkLists = checkData || [];
 
       if(logErr || checkErr) console.error("Data error", logErr, checkErr);
 
-      // 3. Process Data per User
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
-        // --- Work Hours Calculation ---
+        // --- Logic Tính Giờ Mới (Chính xác hơn) ---
         const userLogs = logs.filter(l => l.user_id === user.id);
         const logsByDate = {};
         userLogs.forEach(l => {
@@ -566,27 +557,35 @@ const AdminStatistics = ({ users, roles }) => {
         let workDays = 0;
 
         Object.keys(logsByDate).forEach(date => {
-           // Sort logs: earlier first
+           // Sắp xếp tăng dần theo thời gian
            const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
-           const checkIn = dayLogs.find(l => l.action_type === 'check_in');
-           // Find LAST check out
-           const checkOut = [...dayLogs].reverse().find(l => l.action_type === 'check_out');
+           let dailyMillis = 0;
+           let currentIn = null;
+           let hasActivity = false;
 
-           if(checkIn && checkOut) {
-              const start = new Date(checkIn.log_time);
-              const end = new Date(checkOut.log_time);
-              if (!isNaN(start) && !isNaN(end) && end > start) {
-                  totalMillis += (end - start);
-                  workDays++;
-              }
-           } else if (checkIn) {
-              workDays++; // Vẫn tính công nhưng 0 giờ
-           }
+           dayLogs.forEach(log => {
+             if (log.action_type === 'check_in') {
+                // Nếu chưa có check_in trước đó, hoặc double check-in thì lấy cái đầu tiên
+                if (!currentIn) currentIn = new Date(log.log_time);
+                hasActivity = true;
+             } else if (log.action_type === 'check_out' && currentIn) {
+                const outTime = new Date(log.log_time);
+                // Cộng dồn khoảng thời gian
+                if (outTime > currentIn) {
+                   dailyMillis += (outTime - currentIn);
+                }
+                currentIn = null; // Reset cặp
+                hasActivity = true;
+             }
+           });
+
+           totalMillis += dailyMillis;
+           if(hasActivity) workDays++;
         });
 
         const totalHours = (totalMillis / (1000 * 60 * 60)).toFixed(1);
 
-        // --- Task Completion Calculation ---
+        // --- Task Completion ---
         const userChecklists = checkLists.filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
@@ -613,7 +612,6 @@ const AdminStatistics = ({ users, roles }) => {
 
     } catch (error) {
       console.error("Stats Error:", error);
-      // alert("Lỗi tải thống kê: " + error.message); // Có thể comment lại để tránh popup
     } finally {
       setLoading(false);
     }
@@ -625,7 +623,6 @@ const AdminStatistics = ({ users, roles }) => {
 
   return (
     <div className="space-y-6">
-       {/* Filter Bar */}
        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center">
           <div className="flex items-center gap-2">
              <CalendarClock className="text-blue-600"/>
@@ -644,7 +641,6 @@ const AdminStatistics = ({ users, roles }) => {
           </button>
        </div>
 
-       {/* Overview Cards */}
        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
              <div className="flex justify-between items-start mb-2">
@@ -677,7 +673,6 @@ const AdminStatistics = ({ users, roles }) => {
           </div>
        </div>
 
-       {/* Detailed Table */}
        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
              <h3 className="font-bold text-slate-700">Bảng Chi Tiết Nhân Sự</h3>
@@ -727,6 +722,117 @@ const AdminStatistics = ({ users, roles }) => {
     </div>
   )
 };
+
+// --- COMPONENT ADMIN REPORT (ĐÃ CẬP NHẬT VIEW DATE) ---
+const AdminReports = ({ initialReports, allTasks, roles }) => {
+   const [viewDate, setViewDate] = useState(getTodayISO());
+   const [reports, setReports] = useState(initialReports);
+   const [loading, setLoading] = useState(false);
+
+   // Cập nhật khi props initialReports thay đổi (thường là lần load đầu tiên)
+   useEffect(() => {
+       if (viewDate === getTodayISO()) {
+           setReports(initialReports);
+       }
+   }, [initialReports]);
+
+   // Fetch data khi đổi ngày
+   useEffect(() => {
+       const fetchReportsByDate = async () => {
+           setLoading(true);
+           try {
+               const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', viewDate);
+               const reportMap = {};
+               if(repData) repData.forEach(r => reportMap[r.role] = r.data);
+               setReports(reportMap);
+           } catch (error) {
+               console.error(error);
+           } finally {
+               setLoading(false);
+           }
+       };
+
+       // Nếu là hôm nay và đã có data từ props thì ko cần fetch lại (trừ khi user bấm nút refresh riêng)
+       // Tuy nhiên để đơn giản, cứ đổi ngày là fetch lại cho chắc chắn.
+       fetchReportsByDate();
+
+   }, [viewDate]);
+
+   const sortedTasks = sortTasksByTime([...allTasks]);
+   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
+
+   return (
+     <div className="space-y-4">
+         {/* Thanh điều khiển chọn ngày */}
+         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-3">
+                <span className="text-slate-500 font-bold text-sm"><Calendar size={18} className="inline mr-2"/>Xem báo cáo ngày:</span>
+                <input
+                    type="date"
+                    value={viewDate}
+                    onChange={(e) => setViewDate(e.target.value)}
+                    className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-800 outline-none focus:ring-2 ring-blue-500"
+                />
+            </div>
+            {loading && <div className="text-blue-600 flex items-center gap-2 text-sm font-bold"><Loader2 className="animate-spin" size={16}/> Đang tải...</div>}
+         </div>
+
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+           {roleKeys.map(roleKey => {
+              const roleObj = roles.find(r => r.code === roleKey);
+              const roleName = roleObj ? roleObj.name : roleKey;
+              const roleTasks = sortedTasks.filter(t => t.role === roleKey);
+              if (roleTasks.length === 0 && !roleObj) return null;
+              const roleReport = reports[roleKey] || {};
+              const sentCount = Object.values(roleReport).filter(i => i.sent).length;
+              const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
+
+              return (
+                 <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-100">
+                       <div className="flex justify-between items-center mb-2">
+                           <h3 className="font-bold text-slate-800">{roleName}</h3>
+                           <span className={`text-xs font-bold border px-2 py-1 rounded-full ${percent === 100 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white'}`}>
+                               {sentCount}/{roleTasks.length}
+                           </span>
+                       </div>
+                       <div className="w-full bg-slate-200 rounded-full h-1.5">
+                           <div className={`h-1.5 rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                       </div>
+                    </div>
+                    <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
+                       {roleTasks.length === 0 ? <p className="p-4 text-center text-slate-400 text-sm">Chưa có công việc nào</p> :
+                       roleTasks.map(task => {
+                          const item = roleReport[task.id];
+                          const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, item?.sent);
+                          if(!item || !item.sent) return (
+                              <div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50">
+                                  <span>{task.title} <span className="text-xs">({task.time_label})</span></span>
+                                  {/* Chỉ hiện cảnh báo trễ nếu đang xem ngày hôm nay, ngày quá khứ thì coi như đã trễ nếu chưa xong */}
+                                  {(viewDate === getTodayISO() && isLate) && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}
+                              </div>
+                          );
+                          return (
+                              <div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white">
+                                  <div>
+                                      <p className="font-medium text-slate-700">{task.title}</p>
+                                      <p className="text-xs text-slate-400">{item.time}</p>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1">
+                                      {item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}
+                                      {item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}
+                                  </div>
+                              </div>
+                          )
+                       })}
+                    </div>
+                 </div>
+              )
+           })}
+         </div>
+     </div>
+   )
+}
 
 // --- CÁC COMPONENT CON KHÁC CỦA ADMIN ---
 const AdminTimesheet = ({ timeLogs, users }) => {
@@ -781,50 +887,6 @@ const AdminTimesheet = ({ timeLogs, users }) => {
              </div>
         </div>
     )
-}
-
-const AdminReports = ({ reports, allTasks, roles, onRefresh }) => {
-   const sortedTasks = sortTasksByTime([...allTasks]);
-   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
-
-   return (
-     <div className="space-y-4">
-         {/* Nút Refresh Riêng cho Tiến Độ */}
-         <div className="flex justify-end">
-            <button onClick={onRefresh} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 shadow-sm rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition-colors">
-                <RefreshCcw size={16}/> Làm mới Tiến Độ
-            </button>
-         </div>
-
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-           {roleKeys.map(roleKey => {
-              const roleObj = roles.find(r => r.code === roleKey);
-              const roleName = roleObj ? roleObj.name : roleKey;
-              const roleTasks = sortedTasks.filter(t => t.role === roleKey);
-              if (roleTasks.length === 0 && !roleObj) return null;
-              const roleReport = reports[roleKey] || {};
-              const sentCount = Object.values(roleReport).filter(i => i.sent).length;
-              const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
-              return (
-                 <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div className="p-4 bg-slate-50 border-b border-slate-100">
-                       <div className="flex justify-between items-center mb-2"><h3 className="font-bold text-slate-800">{roleName}</h3><span className="text-xs font-bold bg-white border px-2 py-1 rounded-full">{sentCount}/{roleTasks.length}</span></div>
-                       <div className="w-full bg-slate-200 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div></div>
-                    </div>
-                    <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
-                       {roleTasks.map(task => {
-                          const item = roleReport[task.id];
-                          const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, item?.sent);
-                          if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
-                          return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
-                       })}
-                    </div>
-                 </div>
-              )
-           })}
-         </div>
-     </div>
-   )
 }
 
 const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
