@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle, ExternalLink,
-  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar
+  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter
 } from 'lucide-react';
 
 // --- STYLES CHO HIỆU ỨNG NHẤP NHÁY ---
@@ -106,7 +106,6 @@ export default function App() {
   const [checklistData, setChecklistData] = useState({});
   const [usersList, setUsersList] = useState([]);
   const [rolesList, setRolesList] = useState([]);
-  const [timeLogs, setTimeLogs] = useState([]);
 
   // UI States
   const [loading, setLoading] = useState(false);
@@ -185,11 +184,7 @@ export default function App() {
         if(repData) repData.forEach(r => reportMap[r.role] = r.data);
         setChecklistData(reportMap);
 
-        const { data: logData } = await supabase.from('time_logs')
-            .select('*, app_users(name, role)')
-            .eq('report_date', today)
-            .order('log_time', { ascending: false });
-        setTimeLogs(logData || []);
+        // Lưu ý: time_logs không cần fetch ở đây nữa vì tab AdminTimesheet tự fetch
     } catch (error) {
         showNotify(setNotification, "Lỗi tải dữ liệu admin", "error");
     }
@@ -259,8 +254,7 @@ export default function App() {
                 users={usersList}
                 roles={rolesList}
                 allTasks={tasksConfig}
-                initialReports={checklistData} // Đổi tên prop để tránh hiểu nhầm
-                timeLogs={timeLogs}
+                initialReports={checklistData}
                 onRefresh={fetchAllDataAdmin}
                 setNotify={(m, t) => showNotify(setNotification, m, t)}
               />
@@ -281,7 +275,7 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS
+// STAFF COMPONENTS (GIỮ NGUYÊN)
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
@@ -490,13 +484,13 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
 // ==========================================
 // ADMIN DASHBOARD
 // ==========================================
-const AdminDashboard = ({ users, roles, allTasks, initialReports, timeLogs, onRefresh, setNotify }) => {
+const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
   const [tab, setTab] = useState('timesheet');
   return (
     <div>
       <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1 overflow-x-auto">
         {[
-           {id: 'timesheet', icon: CalendarClock, label: 'Giám Sát Hôm Nay'},
+           {id: 'timesheet', icon: CalendarClock, label: 'Giám Sát'}, // Đã đổi tên
            {id: 'statistics', icon: BarChart3, label: 'Thống Kê & Lương'},
            {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ'},
            {id: 'users', icon: Users, label: 'Nhân Sự'},
@@ -508,9 +502,8 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, timeLogs, onRe
         {/* Nút refresh toàn cục */}
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
-      {tab === 'timesheet' && <AdminTimesheet timeLogs={timeLogs} users={users} />}
+      {tab === 'timesheet' && <AdminTimesheet users={users} />}
       {tab === 'statistics' && <AdminStatistics users={users} roles={roles} />}
-      {/* Sửa lại: Truyền initialReports nhưng AdminReports sẽ tự quản lý ngày xem */}
       {tab === 'reports' && <AdminReports initialReports={initialReports} allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -519,21 +512,24 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, timeLogs, onRe
   );
 };
 
-// --- ADMIN STATISTICS COMPONENT (FIX LOGIC TÍNH GIỜ) ---
+// --- ADMIN STATISTICS COMPONENT (FIX LOGIC TÍNH LƯƠNG & GIỜ) ---
 const AdminStatistics = ({ users, roles }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterRole, setFilterRole] = useState('');
   const [stats, setStats] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [hourlyRate, setHourlyRate] = useState(25000); // Mặc định 25k/h
 
   const calculateStats = async () => {
     setLoading(true);
     try {
+      // Fetch time_logs của tháng đó
       const { data: logsData, error: logErr } = await supabase.from('time_logs')
         .select('*')
-        .ilike('report_date', `${month}%`);
+        .ilike('report_date', `${month}%`); // Lọc theo chuỗi tháng (VD: 2023-11%)
       const logs = logsData || [];
 
+      // Fetch checklist_logs của tháng đó
       const { data: checkData, error: checkErr } = await supabase.from('checklist_logs')
         .select('*')
         .ilike('report_date', `${month}%`);
@@ -544,8 +540,10 @@ const AdminStatistics = ({ users, roles }) => {
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
-        // --- Logic Tính Giờ Mới (Chính xác hơn) ---
+        // --- Logic Tính Giờ (Chính xác từng phút) ---
         const userLogs = logs.filter(l => l.user_id === user.id);
+
+        // Nhóm log theo ngày
         const logsByDate = {};
         userLogs.forEach(l => {
            if(!l.report_date) return;
@@ -557,25 +555,27 @@ const AdminStatistics = ({ users, roles }) => {
         let workDays = 0;
 
         Object.keys(logsByDate).forEach(date => {
-           // Sắp xếp tăng dần theo thời gian
+           // Sắp xếp tăng dần theo thời gian thực
            const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
            let dailyMillis = 0;
            let currentIn = null;
            let hasActivity = false;
 
            dayLogs.forEach(log => {
+             const logTime = new Date(log.log_time);
              if (log.action_type === 'check_in') {
-                // Nếu chưa có check_in trước đó, hoặc double check-in thì lấy cái đầu tiên
-                if (!currentIn) currentIn = new Date(log.log_time);
+                // Nếu gặp check_in, bắt đầu đếm. Nếu đã có check_in trước đó chưa out (quên out), thì reset lấy cái mới
+                currentIn = logTime;
                 hasActivity = true;
-             } else if (log.action_type === 'check_out' && currentIn) {
-                const outTime = new Date(log.log_time);
-                // Cộng dồn khoảng thời gian
-                if (outTime > currentIn) {
-                   dailyMillis += (outTime - currentIn);
+             } else if (log.action_type === 'check_out') {
+                if (currentIn) {
+                    // Nếu có check_in đang chờ, tính khoảng thời gian
+                    if (logTime > currentIn) {
+                       dailyMillis += (logTime - currentIn);
+                    }
+                    currentIn = null; // Đã ghép cặp xong
+                    hasActivity = true;
                 }
-                currentIn = null; // Reset cặp
-                hasActivity = true;
              }
            });
 
@@ -583,7 +583,7 @@ const AdminStatistics = ({ users, roles }) => {
            if(hasActivity) workDays++;
         });
 
-        const totalHours = (totalMillis / (1000 * 60 * 60)).toFixed(1);
+        const totalHours = (totalMillis / (1000 * 60 * 60)); // Giờ dạng float
 
         // --- Task Completion ---
         const userChecklists = checkLists.filter(c => c.role === user.role);
@@ -603,7 +603,8 @@ const AdminStatistics = ({ users, roles }) => {
            name: user.name,
            role: user.role,
            workDays,
-           totalHours,
+           totalHours: totalHours.toFixed(1), // Hiển thị 1 số thập phân
+           rawHours: totalHours, // Dùng để tính tiền chính xác
            completionRate
         };
       }).filter(Boolean);
@@ -623,7 +624,7 @@ const AdminStatistics = ({ users, roles }) => {
 
   return (
     <div className="space-y-6">
-       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center">
+       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center flex-wrap">
           <div className="flex items-center gap-2">
              <CalendarClock className="text-blue-600"/>
              <span className="font-bold text-slate-700">Tháng:</span>
@@ -636,8 +637,22 @@ const AdminStatistics = ({ users, roles }) => {
                 {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
              </select>
           </div>
-          <button onClick={calculateStats} className="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center gap-2">
-             {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Cập nhật
+
+          {/* Ô nhập mức lương */}
+          <div className="flex items-center gap-2 w-full md:w-auto ml-auto md:ml-0 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
+             <DollarSign className="text-emerald-600" size={18}/>
+             <span className="font-bold text-emerald-800 text-sm">Lương/giờ:</span>
+             <input
+                type="number"
+                value={hourlyRate}
+                onChange={e => setHourlyRate(Number(e.target.value))}
+                className="w-24 bg-white border border-emerald-200 rounded px-2 py-1 text-sm font-bold text-right outline-none focus:ring-2 ring-emerald-500"
+             />
+             <span className="text-xs text-emerald-600 font-bold">đ</span>
+          </div>
+
+          <button onClick={calculateStats} className="ml-auto bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center gap-2 shadow-lg shadow-blue-500/30">
+             {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tính Toán
           </button>
        </div>
 
@@ -654,10 +669,12 @@ const AdminStatistics = ({ users, roles }) => {
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
              <div className="flex justify-between items-start mb-2">
                  <div>
-                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Ngày Công</p>
-                    <h3 className="text-2xl font-bold text-slate-800">{stats.reduce((acc, curr) => acc + curr.workDays, 0)} ngày</h3>
+                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Lương (Ước tính)</p>
+                    <h3 className="text-2xl font-bold text-emerald-600">
+                        {(stats.reduce((acc, curr) => acc + (curr.rawHours * hourlyRate), 0)).toLocaleString('vi-VN')} đ
+                    </h3>
                  </div>
-                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><CalendarClock size={20}/></div>
+                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><DollarSign size={20}/></div>
              </div>
           </div>
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
@@ -675,7 +692,7 @@ const AdminStatistics = ({ users, roles }) => {
 
        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-             <h3 className="font-bold text-slate-700">Bảng Chi Tiết Nhân Sự</h3>
+             <h3 className="font-bold text-slate-700">Bảng Chi Tiết Lương & Công</h3>
           </div>
           <div className="overflow-x-auto">
              <table className="w-full text-sm text-left">
@@ -683,10 +700,10 @@ const AdminStatistics = ({ users, roles }) => {
                    <tr>
                       <th className="p-4">Nhân Viên</th>
                       <th className="p-4">Khu Vực</th>
-                      <th className="p-4 text-center">Số Ngày Làm</th>
-                      <th className="p-4 text-center">Tổng Giờ (h)</th>
+                      <th className="p-4 text-center">Số Ngày</th>
+                      <th className="p-4 text-center">Tổng Giờ</th>
+                      <th className="p-4 text-right">Lương ({hourlyRate.toLocaleString()}đ/h)</th>
                       <th className="p-4">Hoàn Thành Việc</th>
-                      <th className="p-4 text-right">Hành động</th>
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -699,6 +716,9 @@ const AdminStatistics = ({ users, roles }) => {
                             <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{s.role}</span></td>
                             <td className="p-4 text-center font-bold">{s.workDays}</td>
                             <td className="p-4 text-center text-blue-600 font-bold">{s.totalHours}</td>
+                            <td className="p-4 text-right font-bold text-emerald-600">
+                                {(s.rawHours * hourlyRate).toLocaleString('vi-VN')} đ
+                            </td>
                             <td className="p-4">
                                <div className="flex items-center gap-2">
                                   <div className="flex-1 h-2 bg-slate-100 rounded-full max-w-[100px]">
@@ -706,11 +726,6 @@ const AdminStatistics = ({ users, roles }) => {
                                   </div>
                                   <span className="text-xs font-bold">{s.completionRate}%</span>
                                </div>
-                            </td>
-                            <td className="p-4 text-right">
-                               <button className="text-blue-600 hover:bg-blue-50 p-2 rounded text-xs font-bold flex items-center gap-1 ml-auto">
-                                  <DollarSign size={14}/> Tính Lương
-                               </button>
                             </td>
                          </tr>
                       ))
@@ -723,20 +738,118 @@ const AdminStatistics = ({ users, roles }) => {
   )
 };
 
-// --- COMPONENT ADMIN REPORT (ĐÃ CẬP NHẬT VIEW DATE) ---
+// --- COMPONENT ADMIN TIMESHEET (ĐÃ THÊM LỌC NGÀY) ---
+const AdminTimesheet = ({ users }) => {
+    const [viewDate, setViewDate] = useState(getTodayISO());
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    // Fetch dữ liệu khi ngày thay đổi
+    useEffect(() => {
+        const fetchLogs = async () => {
+            setLoading(true);
+            try {
+                // Join với bảng app_users để lấy tên
+                const { data, error } = await supabase
+                    .from('time_logs')
+                    .select('*, app_users(name, role)')
+                    .eq('report_date', viewDate)
+                    .order('log_time', { ascending: false });
+
+                if (error) throw error;
+                setLogs(data || []);
+            } catch (err) {
+                console.error("Lỗi tải timesheet:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchLogs();
+    }, [viewDate]);
+
+    return (
+        <div className="space-y-4">
+             {/* Bộ lọc ngày */}
+             <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+                <span className="text-slate-500 font-bold text-sm"><Filter size={18} className="inline mr-1"/> Xem ngày:</span>
+                <input
+                    type="date"
+                    value={viewDate}
+                    onChange={(e) => setViewDate(e.target.value)}
+                    className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-800 outline-none focus:ring-2 ring-blue-500"
+                />
+                {loading && <span className="text-blue-600 text-xs font-bold flex items-center"><Loader2 className="animate-spin mr-1" size={14}/> Đang tải...</span>}
+             </div>
+
+             <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                 <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+                     <h3 className="font-bold text-slate-700">Nhật ký Chấm Công ({viewDate})</h3>
+                 </div>
+                 <div className="overflow-x-auto">
+                 <table className="w-full text-sm text-left">
+                    <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
+                        <tr>
+                            <th className="p-4">Thời gian</th>
+                            <th className="p-4">Nhân viên</th>
+                            <th className="p-4">Hành động</th>
+                            <th className="p-4">Ảnh Xác Thực</th>
+                            <th className="p-4">Định Vị (Map)</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                        {logs.length === 0 ? (
+                            <tr><td colSpan="5" className="p-6 text-center text-slate-400">Không có dữ liệu chấm công ngày này</td></tr>
+                        ) : (
+                            logs.map((log) => (
+                                <tr key={log.id} className="hover:bg-slate-50">
+                                    <td className="p-4 font-mono text-slate-500">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</td>
+                                    <td className="p-4">
+                                        <p className="font-bold text-slate-700">{log.app_users?.name || 'Unknown'}</p>
+                                        <p className="text-xs text-slate-400 uppercase">{log.app_users?.role}</p>
+                                    </td>
+                                    <td className="p-4">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold ${log.action_type==='check_in'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>
+                                            {log.action_type === 'check_in' ? 'VÀO CA' : 'RA CA'}
+                                        </span>
+                                    </td>
+                                    <td className="p-4">
+                                        {log.image_url ? (
+                                            <a href={log.image_url} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:scale-105 transition-transform">
+                                                <img src={log.image_url} alt="checkin" className="w-full h-full object-cover"/>
+                                            </a>
+                                        ) : <span className="text-xs text-slate-300">Không có ảnh</span>}
+                                    </td>
+                                    <td className="p-4">
+                                        {log.lat && log.lng ? (
+                                            <a href={`http://maps.google.com/maps?q=$?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
+                                                <MapPin size={14}/> Xem bản đồ
+                                            </a>
+                                        ) : <span className="text-xs text-slate-300">Không có GPS</span>}
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                 </table>
+                 </div>
+            </div>
+        </div>
+    )
+}
+
+// --- ADMIN REPORT (GIỮ NGUYÊN NHƯNG ĐÃ CÓ VIEW DATE) ---
 const AdminReports = ({ initialReports, allTasks, roles }) => {
    const [viewDate, setViewDate] = useState(getTodayISO());
    const [reports, setReports] = useState(initialReports);
    const [loading, setLoading] = useState(false);
 
-   // Cập nhật khi props initialReports thay đổi (thường là lần load đầu tiên)
    useEffect(() => {
        if (viewDate === getTodayISO()) {
            setReports(initialReports);
        }
    }, [initialReports]);
 
-   // Fetch data khi đổi ngày
    useEffect(() => {
        const fetchReportsByDate = async () => {
            setLoading(true);
@@ -751,11 +864,7 @@ const AdminReports = ({ initialReports, allTasks, roles }) => {
                setLoading(false);
            }
        };
-
-       // Nếu là hôm nay và đã có data từ props thì ko cần fetch lại (trừ khi user bấm nút refresh riêng)
-       // Tuy nhiên để đơn giản, cứ đổi ngày là fetch lại cho chắc chắn.
        fetchReportsByDate();
-
    }, [viewDate]);
 
    const sortedTasks = sortTasksByTime([...allTasks]);
@@ -763,10 +872,9 @@ const AdminReports = ({ initialReports, allTasks, roles }) => {
 
    return (
      <div className="space-y-4">
-         {/* Thanh điều khiển chọn ngày */}
          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div className="flex items-center gap-3">
-                <span className="text-slate-500 font-bold text-sm"><Calendar size={18} className="inline mr-2"/>Xem báo cáo ngày:</span>
+                <span className="text-slate-500 font-bold text-sm"><Calendar size={18} className="inline mr-2"/>Xem tiến độ ngày:</span>
                 <input
                     type="date"
                     value={viewDate}
@@ -808,7 +916,6 @@ const AdminReports = ({ initialReports, allTasks, roles }) => {
                           if(!item || !item.sent) return (
                               <div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50">
                                   <span>{task.title} <span className="text-xs">({task.time_label})</span></span>
-                                  {/* Chỉ hiện cảnh báo trễ nếu đang xem ngày hôm nay, ngày quá khứ thì coi như đã trễ nếu chưa xong */}
                                   {(viewDate === getTodayISO() && isLate) && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}
                               </div>
                           );
@@ -832,61 +939,6 @@ const AdminReports = ({ initialReports, allTasks, roles }) => {
          </div>
      </div>
    )
-}
-
-// --- CÁC COMPONENT CON KHÁC CỦA ADMIN ---
-const AdminTimesheet = ({ timeLogs, users }) => {
-    return (
-        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-             <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                 <h3 className="font-bold text-slate-700">Nhật ký Chấm Công ({getTodayISO()})</h3>
-             </div>
-             <div className="overflow-x-auto">
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
-                    <tr>
-                        <th className="p-4">Thời gian</th>
-                        <th className="p-4">Nhân viên</th>
-                        <th className="p-4">Hành động</th>
-                        <th className="p-4">Ảnh Xác Thực</th>
-                        <th className="p-4">Định Vị (Map)</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                    {timeLogs.length === 0 && <tr><td colSpan="5" className="p-6 text-center text-slate-400">Chưa có dữ liệu hôm nay</td></tr>}
-                    {timeLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-mono text-slate-500">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</td>
-                            <td className="p-4">
-                                <p className="font-bold text-slate-700">{log.app_users?.name}</p>
-                                <p className="text-xs text-slate-400 uppercase">{log.app_users?.role}</p>
-                            </td>
-                            <td className="p-4">
-                                <span className={`px-2 py-1 rounded text-xs font-bold ${log.action_type==='check_in'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>
-                                    {log.action_type === 'check_in' ? 'VÀO CA' : 'RA CA'}
-                                </span>
-                            </td>
-                            <td className="p-4">
-                                {log.image_url ? (
-                                    <a href={log.image_url} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:scale-105 transition-transform">
-                                        <img src={log.image_url} alt="checkin" className="w-full h-full object-cover"/>
-                                    </a>
-                                ) : <span className="text-xs text-slate-300">Không có ảnh</span>}
-                            </td>
-                            <td className="p-4">
-                                {log.lat && log.lng ? (
-                                    <a href={`http://maps.google.com/maps?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
-                                        <MapPin size={14}/> Xem bản đồ
-                                    </a>
-                                ) : <span className="text-xs text-slate-300">Không có GPS</span>}
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-             </table>
-             </div>
-        </div>
-    )
 }
 
 const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
