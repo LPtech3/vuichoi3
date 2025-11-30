@@ -267,7 +267,7 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS (GIỮ NGUYÊN)
+// STAFF COMPONENTS
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
@@ -503,7 +503,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
   );
 };
 
-// --- FIX QUAN TRỌNG: THUẬT TOÁN TÍNH THEO NGÀY (STRICT DAY) ---
+// --- FIX TOÀN DIỆN: TÍNH LƯƠNG DỰA TRÊN LOG_TIME (HỖ TRỢ DATA CŨ + CHECK CÙNG NGÀY) ---
 const AdminStatistics = ({ users, roles }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterRole, setFilterRole] = useState('');
@@ -514,58 +514,64 @@ const AdminStatistics = ({ users, roles }) => {
   const calculateStats = async () => {
     setLoading(true);
     try {
-      const { data: logsData } = await supabase.from('time_logs').select('*').ilike('report_date', `${month}%`);
+      // 1. LẤY DỮ LIỆU BẰNG KHOẢNG THỜI GIAN (TIMESTAMP) THAY VÌ TEXT
+      // Điều này giúp lấy được cả dữ liệu cũ chưa có cột report_date hoặc sai format
+      const startDate = `${month}-01T00:00:00`;
+      // Tính ngày cuối tháng
+      const nextMonth = new Date(month);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      const endDate = nextMonth.toISOString().slice(0, 10) + 'T00:00:00';
+
+      const { data: logsData } = await supabase.from('time_logs')
+        .select('*')
+        .gte('log_time', startDate)
+        .lt('log_time', endDate);
+
       const logs = logsData || [];
 
+      // Vẫn lấy checklist theo tháng (cái này ít quan trọng hơn giờ làm)
       const { data: checkData } = await supabase.from('checklist_logs').select('*').ilike('report_date', `${month}%`);
       const checkLists = checkData || [];
 
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
+        // Lọc log của user
         const userLogs = logs.filter(l => l.user_id === user.id);
 
-        // Nhóm log theo NGÀY (report_date từ database)
-        const logsByDate = {};
-        userLogs.forEach(l => {
-           if (!l.report_date) return;
-           if (!logsByDate[l.report_date]) logsByDate[l.report_date] = [];
-           logsByDate[l.report_date].push(l);
-        });
+        // SẮP XẾP THEO THỜI GIAN THỰC (QUAN TRỌNG)
+        userLogs.sort((a, b) => new Date(a.log_time) - new Date(b.log_time));
 
         let totalMillis = 0;
-        let validWorkDays = 0;
+        let validWorkDays = new Set(); // Dùng Set để đếm số ngày làm việc unique
 
-        // Duyệt từng ngày riêng biệt
-        Object.keys(logsByDate).forEach(date => {
-             const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
+        let currentCheckIn = null; // Lưu timestamp của Check-in gần nhất
 
-             let currentCheckIn = null;
-             let dayMillis = 0;
-             let hasActivity = false;
+        userLogs.forEach(log => {
+             const type = (log.action_type || '').toLowerCase();
+             const time = new Date(log.log_time);
 
-             dayLogs.forEach(log => {
-                 const type = (log.action_type || '').toLowerCase();
-                 const time = new Date(log.log_time);
+             if (type.includes('check_in')) {
+                 // Gặp Check-in -> Bắt đầu tính
+                 currentCheckIn = time;
+             } else if (type.includes('check_out')) {
+                 // Gặp Check-out -> Nếu đang có Check-in chờ
+                 if (currentCheckIn) {
+                     // KIỂM TRA LOGIC: CÙNG NGÀY
+                     const inDateStr = currentCheckIn.toISOString().split('T')[0];
+                     const outDateStr = time.toISOString().split('T')[0];
 
-                 if (type.includes('check_in')) {
-                     currentCheckIn = time;
-                     hasActivity = true;
-                 } else if (type.includes('check_out')) {
-                     // Chỉ tính nếu đã có check-in TRONG CÙNG NGÀY này
-                     if (currentCheckIn) {
-                         // Đảm bảo check out sau check in
+                     // Chỉ tính nếu vào/ra cùng 1 ngày (hoặc bạn có thể bỏ điều kiện này nếu muốn tính qua đêm)
+                     if (inDateStr === outDateStr) {
                          if (time > currentCheckIn) {
-                            dayMillis += (time - currentCheckIn);
+                            totalMillis += (time - currentCheckIn);
+                            validWorkDays.add(inDateStr);
                          }
-                         currentCheckIn = null; // Đã ghép cặp xong
-                         hasActivity = true;
                      }
+                     // Reset sau khi ghép cặp xong
+                     currentCheckIn = null;
                  }
-             });
-
-             totalMillis += dayMillis;
-             if (hasActivity && dayMillis > 0) validWorkDays++;
+             }
         });
 
         const totalHours = (totalMillis / (1000 * 60 * 60));
@@ -585,7 +591,7 @@ const AdminStatistics = ({ users, roles }) => {
            id: user.id,
            name: user.name,
            role: user.role,
-           workDays: validWorkDays,
+           workDays: validWorkDays.size,
            totalHours: totalHours.toFixed(1),
            rawHours: totalHours,
            completionRate
