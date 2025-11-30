@@ -504,71 +504,71 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
 };
 
 // --- FIX TOÀN DIỆN: TÍNH LƯƠNG DỰA TRÊN LOG_TIME (HỖ TRỢ DATA CŨ + CHECK CÙNG NGÀY) ---
+// --- ADMIN STATISTICS (NÂNG CẤP CHI TIẾT NHÂN SỰ) ---
 const AdminStatistics = ({ users, roles }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterRole, setFilterRole] = useState('');
   const [stats, setStats] = useState([]);
+  const [rawLogs, setRawLogs] = useState([]); // Lưu log thô để dùng cho chi tiết
+  const [rawChecklists, setRawChecklists] = useState([]); // Lưu checklist thô
   const [loading, setLoading] = useState(false);
   const [hourlyRate, setHourlyRate] = useState(25000);
 
+  // State cho chế độ xem chi tiết
+  const [selectedUser, setSelectedUser] = useState(null);
+
   const calculateStats = async () => {
     setLoading(true);
+    setSelectedUser(null); // Reset khi load lại
     try {
-      // 1. LẤY DỮ LIỆU BẰNG KHOẢNG THỜI GIAN (TIMESTAMP) THAY VÌ TEXT
-      // Điều này giúp lấy được cả dữ liệu cũ chưa có cột report_date hoặc sai format
       const startDate = `${month}-01T00:00:00`;
-      // Tính ngày cuối tháng
       const nextMonth = new Date(month);
       nextMonth.setMonth(nextMonth.getMonth() + 1);
       const endDate = nextMonth.toISOString().slice(0, 10) + 'T00:00:00';
 
+      // 1. Lấy dữ liệu Time Logs
       const { data: logsData } = await supabase.from('time_logs')
         .select('*')
         .gte('log_time', startDate)
-        .lt('log_time', endDate);
+        .lt('log_time', endDate)
+        .order('log_time', { ascending: true });
 
       const logs = logsData || [];
+      setRawLogs(logs);
 
-      // Vẫn lấy checklist theo tháng (cái này ít quan trọng hơn giờ làm)
-      const { data: checkData } = await supabase.from('checklist_logs').select('*').ilike('report_date', `${month}%`);
+      // 2. Lấy dữ liệu Checklists
+      const { data: checkData } = await supabase.from('checklist_logs')
+        .select('*')
+        .ilike('report_date', `${month}%`);
+
       const checkLists = checkData || [];
+      setRawChecklists(checkLists);
 
+      // 3. Tính toán tổng hợp cho bảng chính
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
-        // Lọc log của user
         const userLogs = logs.filter(l => l.user_id === user.id);
 
-        // SẮP XẾP THEO THỜI GIAN THỰC (QUAN TRỌNG)
-        userLogs.sort((a, b) => new Date(a.log_time) - new Date(b.log_time));
-
+        // Tính giờ làm
         let totalMillis = 0;
-        let validWorkDays = new Set(); // Dùng Set để đếm số ngày làm việc unique
-
-        let currentCheckIn = null; // Lưu timestamp của Check-in gần nhất
+        let validWorkDays = new Set();
+        let currentCheckIn = null;
 
         userLogs.forEach(log => {
              const type = (log.action_type || '').toLowerCase();
              const time = new Date(log.log_time);
 
              if (type.includes('check_in')) {
-                 // Gặp Check-in -> Bắt đầu tính
                  currentCheckIn = time;
              } else if (type.includes('check_out')) {
-                 // Gặp Check-out -> Nếu đang có Check-in chờ
                  if (currentCheckIn) {
-                     // KIỂM TRA LOGIC: CÙNG NGÀY
                      const inDateStr = currentCheckIn.toISOString().split('T')[0];
                      const outDateStr = time.toISOString().split('T')[0];
-
-                     // Chỉ tính nếu vào/ra cùng 1 ngày (hoặc bạn có thể bỏ điều kiện này nếu muốn tính qua đêm)
-                     if (inDateStr === outDateStr) {
-                         if (time > currentCheckIn) {
-                            totalMillis += (time - currentCheckIn);
-                            validWorkDays.add(inDateStr);
-                         }
+                     if (inDateStr === outDateStr && time > currentCheckIn) {
+                        totalMillis += (time - currentCheckIn);
+                        validWorkDays.add(inDateStr);
                      }
-                     // Reset sau khi ghép cặp xong
                      currentCheckIn = null;
                  }
              }
@@ -576,10 +576,11 @@ const AdminStatistics = ({ users, roles }) => {
 
         const totalHours = (totalMillis / (1000 * 60 * 60));
 
-        // Task Completion
+        // Tính hiệu suất công việc
         const userChecklists = checkLists.filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
+
         userChecklists.forEach(cl => {
            const tasks = Object.values(cl.data || {});
            totalTasksAssigned += tasks.length;
@@ -591,6 +592,7 @@ const AdminStatistics = ({ users, roles }) => {
            id: user.id,
            name: user.name,
            role: user.role,
+           username: user.username,
            workDays: validWorkDays.size,
            totalHours: totalHours.toFixed(1),
            rawHours: totalHours,
@@ -611,8 +613,167 @@ const AdminStatistics = ({ users, roles }) => {
      calculateStats();
   }, [month, filterRole]);
 
+  // --- SUB-COMPONENT: CHI TIẾT NHÂN VIÊN ---
+  const UserDetailView = ({ user }) => {
+     // Tạo danh sách các ngày trong tháng
+     const daysInMonth = [];
+     const date = new Date(month);
+     const y = date.getFullYear();
+     const m = date.getMonth();
+     const daysCount = new Date(y, m + 1, 0).getDate();
+
+     for(let i = 1; i <= daysCount; i++) {
+        const d = new Date(y, m, i);
+        // Bỏ qua tương lai
+        if (d > new Date()) break;
+
+        const dateStr = d.toISOString().split('T')[0];
+        daysInMonth.push(dateStr);
+     }
+
+     // Lấy log của user này
+     const userLogs = rawLogs.filter(l => l.user_id === user.id);
+
+     // Dữ liệu chi tiết từng ngày
+     const dailyStats = daysInMonth.reverse().map(dateStr => {
+         // 1. Tính giờ làm ngày đó
+         const daysLogs = userLogs.filter(l => l.report_date === dateStr || l.log_time.startsWith(dateStr));
+         daysLogs.sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
+
+         let dayMillis = 0;
+         let checkInTime = null;
+         let checkOutTime = null;
+
+         // Logic tính giờ đơn giản cho ngày: Lấy In đầu tiên và Out cuối cùng (hoặc cặp)
+         // Ở đây dùng logic ghép cặp chính xác
+         let tempIn = null;
+         daysLogs.forEach(log => {
+             const t = new Date(log.log_time);
+             if(log.action_type === 'check_in') {
+                 if(!checkInTime) checkInTime = t.toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'});
+                 tempIn = t;
+             } else if (log.action_type === 'check_out' && tempIn) {
+                 checkOutTime = t.toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'});
+                 dayMillis += (t - tempIn);
+                 tempIn = null;
+             }
+         });
+         const hours = (dayMillis / (1000 * 60 * 60)).toFixed(1);
+
+         // 2. Tính công việc ngày đó
+         const checklistLog = rawChecklists.find(c => c.report_date === dateStr && c.role === user.role);
+         const tasks = checklistLog ? Object.values(checklistLog.data || {}) : [];
+         const totalTask = tasks.length;
+         const doneTask = tasks.filter(t => t.sent).length;
+
+         // Kiểm tra độ trễ (dựa vào logic checkIsLateWithBuffer ở App chính, nhưng ở đây ta check field sent và time)
+         // Giả sử logic trễ đã được xử lý khi lưu, hoặc ta check thủ công nếu cần.
+         // Ở đây ta đếm số task done nhưng có 'TRỄ' (cần logic phức tạp hơn nếu muốn chính xác tuyệt đối từ data lưu)
+         // Tạm thời ta hiển thị số lượng hoàn thành.
+
+         let rating = "Chưa làm";
+         let ratingColor = "text-slate-400";
+         if (totalTask > 0) {
+             const p = (doneTask / totalTask) * 100;
+             if(p >= 100) { rating = "Xuất sắc"; ratingColor = "text-emerald-600 font-bold"; }
+             else if(p >= 80) { rating = "Tốt"; ratingColor = "text-blue-600 font-bold"; }
+             else if(p >= 50) { rating = "Khá"; ratingColor = "text-amber-600"; }
+             else { rating = "Kém"; ratingColor = "text-red-600"; }
+         } else if (hours > 0) {
+             rating = "Không có việc"; ratingColor = "text-slate-500";
+         }
+
+         return {
+             date: dateStr,
+             dayName: new Date(dateStr).toLocaleDateString('vi-VN', {weekday: 'long'}),
+             checkIn: checkInTime || '--:--',
+             checkOut: checkOutTime || '--:--',
+             hours: hours,
+             taskProgress: `${doneTask}/${totalTask}`,
+             rating,
+             ratingColor,
+             hasWork: hours > 0 || totalTask > 0
+         };
+     });
+
+     return (
+         <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+             <div className="flex items-center gap-4 mb-6">
+                 <button onClick={() => setSelectedUser(null)} className="p-2 rounded-full hover:bg-slate-200 transition-colors">
+                     <TrendingUp className="rotate-180" size={24}/> {/* Back Icon hack */}
+                 </button>
+                 <div>
+                     <h2 className="text-2xl font-bold text-slate-800">{user.name}</h2>
+                     <p className="text-slate-500 text-sm">Bảng chi tiết công & lương tháng {month}</p>
+                 </div>
+                 <div className="ml-auto flex gap-3">
+                      <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+                          <span className="block text-xs text-blue-500 font-bold uppercase">Tổng giờ</span>
+                          <span className="block text-xl font-bold text-blue-700">{user.totalHours}h</span>
+                      </div>
+                      <div className="bg-emerald-50 px-4 py-2 rounded-xl border border-emerald-100">
+                          <span className="block text-xs text-emerald-500 font-bold uppercase">Lương dự kiến</span>
+                          <span className="block text-xl font-bold text-emerald-700">{(user.rawHours * hourlyRate).toLocaleString()}đ</span>
+                      </div>
+                 </div>
+             </div>
+
+             <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+                 <table className="w-full text-sm text-left">
+                     <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs border-b">
+                         <tr>
+                             <th className="p-4">Ngày</th>
+                             <th className="p-4 text-center">Vào / Ra</th>
+                             <th className="p-4 text-center">Số giờ</th>
+                             <th className="p-4">Tiến độ việc</th>
+                             <th className="p-4">Đánh giá</th>
+                         </tr>
+                     </thead>
+                     <tbody className="divide-y divide-slate-50">
+                         {dailyStats.map((day, idx) => (
+                             <tr key={idx} className={`hover:bg-slate-50 transition-colors ${!day.hasWork ? 'opacity-50 grayscale' : ''}`}>
+                                 <td className="p-4">
+                                     <div className="font-bold text-slate-700">{day.date.split('-').reverse().join('/')}</div>
+                                     <div className="text-xs text-slate-400 uppercase">{day.dayName}</div>
+                                 </td>
+                                 <td className="p-4 text-center font-mono text-slate-600">
+                                     {day.checkIn} - {day.checkOut}
+                                 </td>
+                                 <td className="p-4 text-center">
+                                     {parseFloat(day.hours) > 0 ? (
+                                         <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">{day.hours}h</span>
+                                     ) : '-'}
+                                 </td>
+                                 <td className="p-4">
+                                     <div className="flex items-center gap-2">
+                                         <span className="font-mono font-bold text-slate-700">{day.taskProgress}</span>
+                                         {day.taskProgress !== '0/0' && (
+                                              <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                  <div className="bg-emerald-500 h-full" style={{width: `${(parseInt(day.taskProgress.split('/')[0]) / parseInt(day.taskProgress.split('/')[1]) * 100)}%`}}></div>
+                                              </div>
+                                         )}
+                                     </div>
+                                 </td>
+                                 <td className="p-4">
+                                     <span className={day.ratingColor}>{day.rating}</span>
+                                 </td>
+                             </tr>
+                         ))}
+                     </tbody>
+                 </table>
+                 {dailyStats.length === 0 && <div className="p-8 text-center text-slate-400">Không có dữ liệu ngày nào</div>}
+             </div>
+         </div>
+     )
+  }
+
+  // --- MAIN RENDER ---
+  if (selectedUser) {
+      return <UserDetailView user={selectedUser} />;
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-in fade-in duration-300">
        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center flex-wrap">
           <div className="flex items-center gap-2">
              <CalendarClock className="text-blue-600"/>
@@ -644,11 +805,12 @@ const AdminStatistics = ({ users, roles }) => {
           </button>
        </div>
 
+       {/* CARD TỔNG QUAN */}
        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
              <div className="flex justify-between items-start mb-2">
                  <div>
-                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Làm</p>
+                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Toàn Team</p>
                     <h3 className="text-2xl font-bold text-slate-800">{stats.reduce((acc, curr) => acc + parseFloat(curr.totalHours), 0).toFixed(1)}h</h3>
                  </div>
                  <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Clock size={20}/></div>
@@ -657,7 +819,7 @@ const AdminStatistics = ({ users, roles }) => {
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
              <div className="flex justify-between items-start mb-2">
                  <div>
-                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Lương (Ước tính)</p>
+                    <p className="text-slate-400 text-xs font-bold uppercase">Tổng Chi Lương (Ước tính)</p>
                     <h3 className="text-2xl font-bold text-emerald-600">
                         {(stats.reduce((acc, curr) => acc + (curr.rawHours * hourlyRate), 0)).toLocaleString('vi-VN')} đ
                     </h3>
@@ -680,7 +842,7 @@ const AdminStatistics = ({ users, roles }) => {
 
        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
           <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-             <h3 className="font-bold text-slate-700">Bảng Chi Tiết Lương & Công</h3>
+             <h3 className="font-bold text-slate-700">Danh Sách Nhân Viên (Nhấn vào để xem chi tiết)</h3>
           </div>
           <div className="overflow-x-auto">
              <table className="w-full text-sm text-left">
@@ -690,8 +852,8 @@ const AdminStatistics = ({ users, roles }) => {
                       <th className="p-4">Khu Vực</th>
                       <th className="p-4 text-center">Số Ngày</th>
                       <th className="p-4 text-center">Tổng Giờ</th>
-                      <th className="p-4 text-right">Lương ({hourlyRate.toLocaleString()}đ/h)</th>
-                      <th className="p-4">Hoàn Thành Việc</th>
+                      <th className="p-4 text-right">Lương Tạm Tính</th>
+                      <th className="p-4">Mức Độ Hoàn Thành</th>
                    </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -699,8 +861,8 @@ const AdminStatistics = ({ users, roles }) => {
                       <tr><td colSpan="6" className="p-8 text-center text-slate-400">Không có dữ liệu cho tháng này</td></tr>
                    ) : (
                       stats.map(s => (
-                         <tr key={s.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-bold text-slate-700">{s.name}</td>
+                         <tr key={s.id} onClick={() => setSelectedUser(s)} className="hover:bg-blue-50 cursor-pointer transition-colors group">
+                            <td className="p-4 font-bold text-slate-700 group-hover:text-blue-600">{s.name}</td>
                             <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{s.role}</span></td>
                             <td className="p-4 text-center font-bold">{s.workDays}</td>
                             <td className="p-4 text-center text-blue-600 font-bold">{s.totalHours}</td>
