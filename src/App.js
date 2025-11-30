@@ -5,11 +5,11 @@ import {
   CheckCircle2, Clock, Send, Loader2,
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
-  CalendarClock, AlertTriangle, AlertCircle, ExternalLink,
+  CalendarClock, AlertTriangle, AlertCircle,
   Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter
 } from 'lucide-react';
 
-// --- STYLES CHO HIỆU ỨNG NHẤP NHÁY ---
+// --- STYLES ---
 const CustomStyles = () => (
   <style>{`
     @keyframes blink-red {
@@ -62,7 +62,6 @@ const getCurrentLocation = () => {
   });
 };
 
-// --- LOGIC THỜI GIAN ---
 const checkIsDue = (timeLabel, isDone = false) => {
   if (isDone || !timeLabel || typeof timeLabel !== 'string' || !timeLabel.includes(':')) return false;
   try {
@@ -96,7 +95,7 @@ const sortTasksByTime = (tasks) => {
     });
 };
 
-// --- COMPONENT CHÍNH ---
+// --- MAIN APP COMPONENT ---
 export default function App() {
   const [user, setUser] = useState(null);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
@@ -113,7 +112,6 @@ export default function App() {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
 
-  // --- LOGIC ---
   const handleLogin = async () => {
     setLoading(true);
     try {
@@ -169,22 +167,16 @@ export default function App() {
   const fetchAllDataAdmin = async () => {
     try {
         const today = getTodayISO();
-
         const { data: uData } = await supabase.from('app_users').select('*').order('created_at');
         setUsersList(uData || []);
-
         const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
         setRolesList(rData || []);
-
         const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
         setTasksConfig(tData || []);
-
         const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
         const reportMap = {};
         if(repData) repData.forEach(r => reportMap[r.role] = r.data);
         setChecklistData(reportMap);
-
-        // Lưu ý: time_logs không cần fetch ở đây nữa vì tab AdminTimesheet tự fetch
     } catch (error) {
         showNotify(setNotification, "Lỗi tải dữ liệu admin", "error");
     }
@@ -490,7 +482,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
     <div>
       <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1 overflow-x-auto">
         {[
-           {id: 'timesheet', icon: CalendarClock, label: 'Giám Sát'}, // Đã đổi tên
+           {id: 'timesheet', icon: CalendarClock, label: 'Giám Sát'},
            {id: 'statistics', icon: BarChart3, label: 'Thống Kê & Lương'},
            {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ'},
            {id: 'users', icon: Users, label: 'Nhân Sự'},
@@ -499,7 +491,6 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
         ].map(t => (
            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm whitespace-nowrap transition-all border-b-2 ${tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><t.icon size={18}/> {t.label}</button>
         ))}
-        {/* Nút refresh toàn cục */}
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
       {tab === 'timesheet' && <AdminTimesheet users={users} />}
@@ -512,99 +503,91 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
   );
 };
 
-// --- ADMIN STATISTICS COMPONENT (FIX LOGIC TÍNH LƯƠNG & GIỜ) ---
+// --- FIX QUAN TRỌNG: THUẬT TOÁN TÍNH THEO NGÀY (STRICT DAY) ---
 const AdminStatistics = ({ users, roles }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterRole, setFilterRole] = useState('');
   const [stats, setStats] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [hourlyRate, setHourlyRate] = useState(25000); // Mặc định 25k/h
+  const [hourlyRate, setHourlyRate] = useState(25000);
 
   const calculateStats = async () => {
     setLoading(true);
     try {
-      // Fetch time_logs của tháng đó
-      const { data: logsData, error: logErr } = await supabase.from('time_logs')
-        .select('*')
-        .ilike('report_date', `${month}%`); // Lọc theo chuỗi tháng (VD: 2023-11%)
+      const { data: logsData } = await supabase.from('time_logs').select('*').ilike('report_date', `${month}%`);
       const logs = logsData || [];
 
-      // Fetch checklist_logs của tháng đó
-      const { data: checkData, error: checkErr } = await supabase.from('checklist_logs')
-        .select('*')
-        .ilike('report_date', `${month}%`);
+      const { data: checkData } = await supabase.from('checklist_logs').select('*').ilike('report_date', `${month}%`);
       const checkLists = checkData || [];
-
-      if(logErr || checkErr) console.error("Data error", logErr, checkErr);
 
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
-        // --- Logic Tính Giờ (Chính xác từng phút) ---
         const userLogs = logs.filter(l => l.user_id === user.id);
 
-        // Nhóm log theo ngày
+        // Nhóm log theo NGÀY (report_date từ database)
         const logsByDate = {};
         userLogs.forEach(l => {
-           if(!l.report_date) return;
-           if(!logsByDate[l.report_date]) logsByDate[l.report_date] = [];
+           if (!l.report_date) return;
+           if (!logsByDate[l.report_date]) logsByDate[l.report_date] = [];
            logsByDate[l.report_date].push(l);
         });
 
         let totalMillis = 0;
-        let workDays = 0;
+        let validWorkDays = 0;
 
+        // Duyệt từng ngày riêng biệt
         Object.keys(logsByDate).forEach(date => {
-           // Sắp xếp tăng dần theo thời gian thực
-           const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
-           let dailyMillis = 0;
-           let currentIn = null;
-           let hasActivity = false;
+             const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
 
-           dayLogs.forEach(log => {
-             const logTime = new Date(log.log_time);
-             if (log.action_type === 'check_in') {
-                // Nếu gặp check_in, bắt đầu đếm. Nếu đã có check_in trước đó chưa out (quên out), thì reset lấy cái mới
-                currentIn = logTime;
-                hasActivity = true;
-             } else if (log.action_type === 'check_out') {
-                if (currentIn) {
-                    // Nếu có check_in đang chờ, tính khoảng thời gian
-                    if (logTime > currentIn) {
-                       dailyMillis += (logTime - currentIn);
-                    }
-                    currentIn = null; // Đã ghép cặp xong
-                    hasActivity = true;
-                }
-             }
-           });
+             let currentCheckIn = null;
+             let dayMillis = 0;
+             let hasActivity = false;
 
-           totalMillis += dailyMillis;
-           if(hasActivity) workDays++;
+             dayLogs.forEach(log => {
+                 const type = (log.action_type || '').toLowerCase();
+                 const time = new Date(log.log_time);
+
+                 if (type.includes('check_in')) {
+                     currentCheckIn = time;
+                     hasActivity = true;
+                 } else if (type.includes('check_out')) {
+                     // Chỉ tính nếu đã có check-in TRONG CÙNG NGÀY này
+                     if (currentCheckIn) {
+                         // Đảm bảo check out sau check in
+                         if (time > currentCheckIn) {
+                            dayMillis += (time - currentCheckIn);
+                         }
+                         currentCheckIn = null; // Đã ghép cặp xong
+                         hasActivity = true;
+                     }
+                 }
+             });
+
+             totalMillis += dayMillis;
+             if (hasActivity && dayMillis > 0) validWorkDays++;
         });
 
-        const totalHours = (totalMillis / (1000 * 60 * 60)); // Giờ dạng float
+        const totalHours = (totalMillis / (1000 * 60 * 60));
 
-        // --- Task Completion ---
+        // Task Completion
         const userChecklists = checkLists.filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
-
         userChecklists.forEach(cl => {
            const tasks = Object.values(cl.data || {});
            totalTasksAssigned += tasks.length;
            totalTasksDone += tasks.filter(t => t.sent).length;
         });
-
         const completionRate = totalTasksAssigned === 0 ? 0 : Math.round((totalTasksDone / totalTasksAssigned) * 100);
 
         return {
            id: user.id,
            name: user.name,
            role: user.role,
-           workDays,
-           totalHours: totalHours.toFixed(1), // Hiển thị 1 số thập phân
-           rawHours: totalHours, // Dùng để tính tiền chính xác
+           workDays: validWorkDays,
+           totalHours: totalHours.toFixed(1),
+           rawHours: totalHours,
            completionRate
         };
       }).filter(Boolean);
@@ -638,7 +621,6 @@ const AdminStatistics = ({ users, roles }) => {
              </select>
           </div>
 
-          {/* Ô nhập mức lương */}
           <div className="flex items-center gap-2 w-full md:w-auto ml-auto md:ml-0 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
              <DollarSign className="text-emerald-600" size={18}/>
              <span className="font-bold text-emerald-800 text-sm">Lương/giờ:</span>
@@ -717,7 +699,7 @@ const AdminStatistics = ({ users, roles }) => {
                             <td className="p-4 text-center font-bold">{s.workDays}</td>
                             <td className="p-4 text-center text-blue-600 font-bold">{s.totalHours}</td>
                             <td className="p-4 text-right font-bold text-emerald-600">
-                                {(s.rawHours * hourlyRate).toLocaleString('vi-VN')} đ
+                                {Math.round(s.rawHours * hourlyRate).toLocaleString('vi-VN')} đ
                             </td>
                             <td className="p-4">
                                <div className="flex items-center gap-2">
@@ -738,18 +720,15 @@ const AdminStatistics = ({ users, roles }) => {
   )
 };
 
-// --- COMPONENT ADMIN TIMESHEET (ĐÃ THÊM LỌC NGÀY) ---
 const AdminTimesheet = ({ users }) => {
     const [viewDate, setViewDate] = useState(getTodayISO());
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
 
-    // Fetch dữ liệu khi ngày thay đổi
     useEffect(() => {
         const fetchLogs = async () => {
             setLoading(true);
             try {
-                // Join với bảng app_users để lấy tên
                 const { data, error } = await supabase
                     .from('time_logs')
                     .select('*, app_users(name, role)')
@@ -764,13 +743,11 @@ const AdminTimesheet = ({ users }) => {
                 setLoading(false);
             }
         };
-
         fetchLogs();
     }, [viewDate]);
 
     return (
         <div className="space-y-4">
-             {/* Bộ lọc ngày */}
              <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
                 <span className="text-slate-500 font-bold text-sm"><Filter size={18} className="inline mr-1"/> Xem ngày:</span>
                 <input
@@ -822,7 +799,7 @@ const AdminTimesheet = ({ users }) => {
                                     </td>
                                     <td className="p-4">
                                         {log.lat && log.lng ? (
-                                            <a href={`http://maps.google.com/maps?q=$?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
+                                            <a href={`http://googleusercontent.com/maps.google.com/2{log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
                                                 <MapPin size={14}/> Xem bản đồ
                                             </a>
                                         ) : <span className="text-xs text-slate-300">Không có GPS</span>}
@@ -838,7 +815,6 @@ const AdminTimesheet = ({ users }) => {
     )
 }
 
-// --- ADMIN REPORT (GIỮ NGUYÊN NHƯNG ĐÃ CÓ VIEW DATE) ---
 const AdminReports = ({ initialReports, allTasks, roles }) => {
    const [viewDate, setViewDate] = useState(getTodayISO());
    const [reports, setReports] = useState(initialReports);
