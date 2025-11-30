@@ -44,7 +44,7 @@ const getCurrentLocation = () => {
     } else {
       const options = {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 15000, // Tăng thời gian chờ lên 15s
         maximumAge: 0
       };
       navigator.geolocation.getCurrentPosition(
@@ -62,32 +62,33 @@ const getCurrentLocation = () => {
   });
 };
 
-// Hàm kiểm tra đến giờ chưa (Dùng để báo động)
-// Logic: Nếu giờ hiện tại >= giờ cài đặt -> True (Cần làm ngay)
+// --- LOGIC THỜI GIAN AN TOÀN (Sửa lỗi crash) ---
 const checkIsDue = (timeLabel, isDone = false) => {
-  if (isDone || !timeLabel || !timeLabel.includes(':')) return false;
-  const now = new Date();
-  const [h, m] = timeLabel.split(':').map(Number);
-  const taskTime = new Date();
-  taskTime.setHours(h, m, 0, 0); // Set giờ của việc
-
-  // So sánh: Nếu hiện tại lớn hơn hoặc bằng giờ việc -> Đến giờ rồi!
-  return now >= taskTime;
+  if (isDone || !timeLabel || typeof timeLabel !== 'string' || !timeLabel.includes(':')) return false;
+  try {
+      const now = new Date();
+      const [h, m] = timeLabel.split(':').map(Number);
+      const taskTime = new Date();
+      taskTime.setHours(h, m, 0, 0);
+      return now >= taskTime;
+  } catch (e) { return false; }
 };
 
-// Hàm kiểm tra trễ hẳn (để hiển thị text 'Trễ' nếu vượt quá buffer)
 const checkIsLateWithBuffer = (timeLabel, bufferMins = 0, isDone = false) => {
-    if (isDone || !timeLabel || !timeLabel.includes(':')) return false;
-    const now = new Date();
-    const [h, m] = timeLabel.split(':').map(Number);
-    const taskTime = new Date();
-    taskTime.setHours(h, m, 0, 0);
-    const buffer = parseInt(bufferMins) || 0;
-    const deadline = new Date(taskTime.getTime() + (buffer * 60000));
-    return now > deadline;
+    if (isDone || !timeLabel || typeof timeLabel !== 'string' || !timeLabel.includes(':')) return false;
+    try {
+        const now = new Date();
+        const [h, m] = timeLabel.split(':').map(Number);
+        const taskTime = new Date();
+        taskTime.setHours(h, m, 0, 0);
+        const buffer = parseInt(bufferMins) || 0;
+        const deadline = new Date(taskTime.getTime() + (buffer * 60000));
+        return now > deadline;
+    } catch (e) { return false; }
 }
 
 const sortTasksByTime = (tasks) => {
+    if(!tasks || !Array.isArray(tasks)) return [];
     return tasks.sort((a, b) => {
         const timeA = a.time_label || '23:59';
         const timeB = b.time_label || '23:59';
@@ -167,24 +168,32 @@ export default function App() {
   };
 
   const fetchAllDataAdmin = async () => {
-    const today = getTodayISO();
-    const { data: uData } = await supabase.from('app_users').select('*').order('created_at');
-    setUsersList(uData || []);
-    const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
-    setRolesList(rData || []);
-    const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
-    setTasksConfig(tData || []);
+    // Không set Loading true ở đây để tránh nháy màn hình khi refresh ngầm
+    try {
+        const today = getTodayISO();
 
-    const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
-    const reportMap = {};
-    if(repData) repData.forEach(r => reportMap[r.role] = r.data);
-    setChecklistData(reportMap);
+        const { data: uData } = await supabase.from('app_users').select('*').order('created_at');
+        setUsersList(uData || []);
 
-    const { data: logData } = await supabase.from('time_logs')
-        .select('*, app_users(name, role)')
-        .eq('report_date', today)
-        .order('log_time', { ascending: false });
-    setTimeLogs(logData || []);
+        const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
+        setRolesList(rData || []);
+
+        const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
+        setTasksConfig(tData || []);
+
+        const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
+        const reportMap = {};
+        if(repData) repData.forEach(r => reportMap[r.role] = r.data);
+        setChecklistData(reportMap);
+
+        const { data: logData } = await supabase.from('time_logs')
+            .select('*, app_users(name, role)')
+            .eq('report_date', today)
+            .order('log_time', { ascending: false });
+        setTimeLogs(logData || []);
+    } catch (error) {
+        showNotify(setNotification, "Lỗi tải dữ liệu admin", "error");
+    }
   };
 
   if (!user) return <ModernLogin loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} loading={loading} />;
@@ -217,7 +226,7 @@ export default function App() {
           <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-lg shadow-lg">
-                {user.name.charAt(0)}
+                {user.name ? user.name.charAt(0) : 'U'}
               </div>
               <div>
                 <h1 className="font-bold text-slate-800 text-sm lg:text-base">{user.name}</h1>
@@ -273,39 +282,33 @@ export default function App() {
 }
 
 // ==========================================
-// STAFF COMPONENTS (Sửa logic nhấp nháy tại đây)
+// STAFF COMPONENTS (Đã Fix lỗi treo khi note)
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
     const [attendance, setAttendance] = useState({ in: null, out: null });
     const [loadingSend, setLoadingSend] = useState(null);
     const [attLoading, setAttLoading] = useState(false);
-
-    // State "tick" để ép giao diện cập nhật mỗi 30s
     const [, setTick] = useState(0);
 
     useEffect(() => {
         checkAttendanceStatus();
-
-        // Tạo bộ đếm thời gian: Mỗi 30 giây cập nhật giao diện 1 lần
-        // Để đảm bảo "CheckIsDue" luôn được tính lại
-        const timer = setInterval(() => {
-            setTick(t => t + 1);
-        }, 30000);
-
+        const timer = setInterval(() => setTick(t => t + 1), 30000);
         return () => clearInterval(timer);
     }, []);
 
     const checkAttendanceStatus = async () => {
-      const today = getTodayISO();
-      const { data } = await supabase.from('time_logs').select('*').eq('user_id', user.id).eq('report_date', today);
-      if (data) {
-        const checkIn = data.find(x => x.action_type === 'check_in');
-        const checkOut = data.find(x => x.action_type === 'check_out');
-        setAttendance({
-          in: checkIn ? new Date(checkIn.log_time).toLocaleTimeString('vi-VN') : null,
-          out: checkOut ? new Date(checkOut.log_time).toLocaleTimeString('vi-VN') : null
-        });
-      }
+      try {
+          const today = getTodayISO();
+          const { data } = await supabase.from('time_logs').select('*').eq('user_id', user.id).eq('report_date', today);
+          if (data) {
+            const checkIn = data.find(x => x.action_type === 'check_in');
+            const checkOut = data.find(x => x.action_type === 'check_out');
+            setAttendance({
+              in: checkIn ? new Date(checkIn.log_time).toLocaleTimeString('vi-VN') : null,
+              out: checkOut ? new Date(checkOut.log_time).toLocaleTimeString('vi-VN') : null
+            });
+          }
+      } catch (e) { console.error(e); }
     };
 
     const handleAttendanceCapture = async (e, type) => {
@@ -363,17 +366,24 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
        const taskDef = tasks.find(t => t.id === taskDefId);
        if(taskDef?.require_input && !item.val) return setNotify("Thiếu thông tin!", "error");
        if(taskDef?.require_image && !item.imageUrl) return setNotify("Thiếu ảnh!", "error");
+
        setLoadingSend(taskDefId);
        try {
-         item.sent = true;
-         const newReportData = { ...reportData, [taskDefId]: item };
+         // Optimistic Update: Cập nhật giao diện trước
+         const newItem = { ...item, sent: true };
+         const newReportData = { ...reportData, [taskDefId]: newItem };
+         onUpdateLocal(newReportData);
+
+         // Gửi lên server
          const { error } = await supabase.from('checklist_logs').upsert({ report_date: getTodayISO(), role: user.role, data: newReportData }, { onConflict: 'report_date, role' });
          if(error) throw error;
-         onUpdateLocal(newReportData);
+
          setNotify("Đã gửi báo cáo!");
        } catch (err) {
-         item.sent = false; onUpdateLocal({ ...reportData, [taskDefId]: item });
-         setNotify("Gửi lỗi", "error");
+         // Revert nếu lỗi
+         const revertedItem = { ...item, sent: false };
+         onUpdateLocal({ ...reportData, [taskDefId]: revertedItem });
+         setNotify("Gửi lỗi, vui lòng thử lại", "error");
        } finally { setLoadingSend(null); }
     };
 
@@ -440,19 +450,12 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
             const isDone = item.done;
             const isSent = item.sent;
 
-            // SỬA: Dùng checkIsDue để báo động NHẤP NHÁY ngay khi đến giờ
             const isDue = checkIsDue(task.time_label, isDone);
-            // SỬA: Dùng checkIsLateWithBuffer để hiển thị chữ "Trễ" nếu quá hạn
             const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, isDone);
 
-            // LOGIC MÀU SẮC:
-            // 1. Đã gửi -> Xanh lá nhạt
-            // 2. Đến giờ (isDue) và chưa xong -> ĐỎ NHẤP NHÁY
-            // 3. Đã xong nhưng chưa gửi -> Xanh dương
-            // 4. Bình thường -> Trắng
             const cardClass = isSent
                 ? 'border-emerald-100 bg-emerald-50/20'
-                : (isDue && !isDone) // Thay đổi ở đây: Đến giờ là nháy ngay
+                : (isDue && !isDone)
                     ? 'urgent-blink text-red-800'
                     : isDone
                         ? 'border-blue-100 bg-white'
@@ -506,11 +509,13 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
         ].map(t => (
            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm whitespace-nowrap transition-all border-b-2 ${tab === t.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><t.icon size={18}/> {t.label}</button>
         ))}
+        {/* Nút refresh toàn cục */}
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
       {tab === 'timesheet' && <AdminTimesheet timeLogs={timeLogs} users={users} />}
       {tab === 'statistics' && <AdminStatistics users={users} roles={roles} />}
-      {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} />}
+      {/* Truyền hàm onRefresh vào AdminReports */}
+      {tab === 'reports' && <AdminReports reports={reports} allTasks={allTasks} roles={roles} onRefresh={onRefresh} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -518,7 +523,7 @@ const AdminDashboard = ({ users, roles, allTasks, reports, timeLogs, onRefresh, 
   );
 };
 
-// --- ADMIN STATISTICS COMPONENT (NEW) ---
+// --- ADMIN STATISTICS COMPONENT (FIX CRASH) ---
 const AdminStatistics = ({ users, roles }) => {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterRole, setFilterRole] = useState('');
@@ -528,25 +533,31 @@ const AdminStatistics = ({ users, roles }) => {
   const calculateStats = async () => {
     setLoading(true);
     try {
-      // 1. Fetch Time Logs for the month
-      const { data: logs } = await supabase.from('time_logs')
+      // 1. Fetch Time Logs
+      const { data: logsData, error: logErr } = await supabase.from('time_logs')
         .select('*')
         .ilike('report_date', `${month}%`);
 
-      // 2. Fetch Checklist Logs for the month
-      const { data: checkLists } = await supabase.from('checklist_logs')
+      const logs = logsData || []; // FIX: Fallback to array to prevent crash
+
+      // 2. Fetch Checklist Logs
+      const { data: checkData, error: checkErr } = await supabase.from('checklist_logs')
         .select('*')
         .ilike('report_date', `${month}%`);
+
+      const checkLists = checkData || []; // FIX: Fallback to array
+
+      if(logErr || checkErr) console.error("Data error", logErr, checkErr);
 
       // 3. Process Data per User
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
         // --- Work Hours Calculation ---
-        const userLogs = logs ? logs.filter(l => l.user_id === user.id) : [];
-        // Group logs by date
+        const userLogs = logs.filter(l => l.user_id === user.id);
         const logsByDate = {};
         userLogs.forEach(l => {
+           if(!l.report_date) return;
            if(!logsByDate[l.report_date]) logsByDate[l.report_date] = [];
            logsByDate[l.report_date].push(l);
         });
@@ -555,26 +566,28 @@ const AdminStatistics = ({ users, roles }) => {
         let workDays = 0;
 
         Object.keys(logsByDate).forEach(date => {
+           // Sort logs: earlier first
            const dayLogs = logsByDate[date].sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
            const checkIn = dayLogs.find(l => l.action_type === 'check_in');
-           const checkOut = dayLogs.reverse().find(l => l.action_type === 'check_out'); // Find last checkout
+           // Find LAST check out
+           const checkOut = [...dayLogs].reverse().find(l => l.action_type === 'check_out');
 
-           if(checkIn && checkOut && new Date(checkOut.log_time) > new Date(checkIn.log_time)) {
-              totalMillis += (new Date(checkOut.log_time) - new Date(checkIn.log_time));
-              workDays++;
+           if(checkIn && checkOut) {
+              const start = new Date(checkIn.log_time);
+              const end = new Date(checkOut.log_time);
+              if (!isNaN(start) && !isNaN(end) && end > start) {
+                  totalMillis += (end - start);
+                  workDays++;
+              }
            } else if (checkIn) {
-              // Only checkin, no checkout -> Count as day worked but 0 hours or default?
-              // For now, let's count day but 0 hours to alert admin
-              workDays++;
+              workDays++; // Vẫn tính công nhưng 0 giờ
            }
         });
 
         const totalHours = (totalMillis / (1000 * 60 * 60)).toFixed(1);
 
         // --- Task Completion Calculation ---
-        // Find all checklists submitted by this user's role (Assumption: User sticks to role)
-        // Or better: Filter checklist_logs where role == user.role
-        const userChecklists = checkLists ? checkLists.filter(c => c.role === user.role) : [];
+        const userChecklists = checkLists.filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
 
@@ -599,8 +612,8 @@ const AdminStatistics = ({ users, roles }) => {
       setStats(processed);
 
     } catch (error) {
-      console.error(error);
-      alert("Lỗi tải thống kê");
+      console.error("Stats Error:", error);
+      // alert("Lỗi tải thống kê: " + error.message); // Có thể comment lại để tránh popup
     } finally {
       setLoading(false);
     }
@@ -770,37 +783,46 @@ const AdminTimesheet = ({ timeLogs, users }) => {
     )
 }
 
-const AdminReports = ({ reports, allTasks, roles }) => {
+const AdminReports = ({ reports, allTasks, roles, onRefresh }) => {
    const sortedTasks = sortTasksByTime([...allTasks]);
    const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
 
    return (
-     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-       {roleKeys.map(roleKey => {
-          const roleObj = roles.find(r => r.code === roleKey);
-          const roleName = roleObj ? roleObj.name : roleKey;
-          const roleTasks = sortedTasks.filter(t => t.role === roleKey);
-          if (roleTasks.length === 0 && !roleObj) return null;
-          const roleReport = reports[roleKey] || {};
-          const sentCount = Object.values(roleReport).filter(i => i.sent).length;
-          const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
-          return (
-             <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-4 bg-slate-50 border-b border-slate-100">
-                   <div className="flex justify-between items-center mb-2"><h3 className="font-bold text-slate-800">{roleName}</h3><span className="text-xs font-bold bg-white border px-2 py-1 rounded-full">{sentCount}/{roleTasks.length}</span></div>
-                   <div className="w-full bg-slate-200 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div></div>
-                </div>
-                <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
-                   {roleTasks.map(task => {
-                      const item = roleReport[task.id];
-                      const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, item?.sent);
-                      if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
-                      return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
-                   })}
-                </div>
-             </div>
-          )
-       })}
+     <div className="space-y-4">
+         {/* Nút Refresh Riêng cho Tiến Độ */}
+         <div className="flex justify-end">
+            <button onClick={onRefresh} className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 shadow-sm rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 hover:text-blue-600 transition-colors">
+                <RefreshCcw size={16}/> Làm mới Tiến Độ
+            </button>
+         </div>
+
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+           {roleKeys.map(roleKey => {
+              const roleObj = roles.find(r => r.code === roleKey);
+              const roleName = roleObj ? roleObj.name : roleKey;
+              const roleTasks = sortedTasks.filter(t => t.role === roleKey);
+              if (roleTasks.length === 0 && !roleObj) return null;
+              const roleReport = reports[roleKey] || {};
+              const sentCount = Object.values(roleReport).filter(i => i.sent).length;
+              const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
+              return (
+                 <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-100">
+                       <div className="flex justify-between items-center mb-2"><h3 className="font-bold text-slate-800">{roleName}</h3><span className="text-xs font-bold bg-white border px-2 py-1 rounded-full">{sentCount}/{roleTasks.length}</span></div>
+                       <div className="w-full bg-slate-200 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div></div>
+                    </div>
+                    <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
+                       {roleTasks.map(task => {
+                          const item = roleReport[task.id];
+                          const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, item?.sent);
+                          if(!item || !item.sent) return (<div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50"><span>{task.title} <span className="text-xs">({task.time_label})</span></span>{isLate && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}</div>);
+                          return (<div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white"><div><p className="font-medium text-slate-700">{task.title}</p><p className="text-xs text-slate-400">{item.time}</p></div><div className="flex flex-col items-end gap-1">{item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}{item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}</div></div>)
+                       })}
+                    </div>
+                 </div>
+              )
+           })}
+         </div>
      </div>
    )
 }
