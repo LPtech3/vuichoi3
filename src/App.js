@@ -7,7 +7,7 @@ import {
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle,
   Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter, ChevronRight,
-  Eye, EyeOff, UserCog, Layers
+  Eye, EyeOff, UserCog, Layers, CheckSquare
 } from 'lucide-react';
 
 // --- STYLES ---
@@ -233,6 +233,7 @@ export default function App() {
   const fetchAllDataManager = async () => {
      try {
         const today = getTodayISO();
+        // Manager thấy mọi user trừ admin
         const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
         setUsersList(uData || []);
         const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
@@ -622,24 +623,139 @@ const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }
 // MANAGER DASHBOARD
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-   const [tab, setTab] = useState('assign');
+   const [tab, setTab] = useState('monitor'); // Default monitor
    return (
       <div>
          <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1">
-            <button onClick={() => setTab('assign')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'assign' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
-               <UserCog size={18}/> Phân Công
-            </button>
-            <button onClick={() => setTab('monitor')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'monitor' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
+             <button onClick={() => setTab('monitor')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'monitor' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
                <LayoutDashboard size={18}/> Giám Sát Tiến Độ
+            </button>
+            <button onClick={() => setTab('assign')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'assign' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
+               <UserCog size={18}/> Phân Công & Nhân Sự
             </button>
             <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
          </div>
 
-         {tab === 'assign' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
-         {tab === 'monitor' && <AdminReports allTasks={allTasks} roles={roles} />}
+         {/* Sử dụng component dành riêng cho Manager */}
+         {tab === 'assign' && <ManagerTaskAssignment users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
+         {/* Giữ lại AdminReports nhưng có thêm props users để lọc */}
+         {tab === 'monitor' && <AdminReports allTasks={allTasks} roles={roles} users={users} />}
       </div>
    );
 };
+
+// --- NEW COMPONENT: MANAGER TASK ASSIGNMENT ---
+// Chỉ phân công công việc, không sửa user/pass
+const ManagerTaskAssignment = ({ users, roles, onRefresh, setNotify }) => {
+    // Local state để quản lý checkbox thay đổi trước khi bấm lưu
+    const [userRolesState, setUserRolesState] = useState({});
+    const [loadingSave, setLoadingSave] = useState(null);
+
+    // Init state từ props users
+    useEffect(() => {
+        const init = {};
+        users.forEach(u => {
+            init[u.id] = u.role.split(',').map(r => r.trim());
+        });
+        setUserRolesState(init);
+    }, [users]);
+
+    const toggleRole = (userId, roleCode) => {
+        setUserRolesState(prev => {
+            const currentRoles = prev[userId] || [];
+            if (currentRoles.includes(roleCode)) {
+                return { ...prev, [userId]: currentRoles.filter(r => r !== roleCode) };
+            } else {
+                return { ...prev, [userId]: [...currentRoles, roleCode] };
+            }
+        });
+    };
+
+    const handleSaveUser = async (user) => {
+        const selectedRoles = userRolesState[user.id];
+        if (!selectedRoles || selectedRoles.length === 0) return setNotify("Phải chọn ít nhất 1 công việc!", "error");
+
+        setLoadingSave(user.id);
+        const roleString = selectedRoles.join(',');
+
+        try {
+            const { error } = await supabase.from('app_users').update({ role: roleString }).eq('id', user.id);
+            if (error) throw error;
+            setNotify("Đã cập nhật phân công cho " + user.name);
+            onRefresh();
+        } catch (err) {
+            setNotify("Lỗi: " + err.message, "error");
+        } finally {
+            setLoadingSave(null);
+        }
+    };
+
+    return (
+        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+            <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
+                    <tr>
+                        <th className="p-4 w-1/4">Nhân viên</th>
+                        <th className="p-4 w-1/2">Phân công Khu vực / Công việc</th>
+                        <th className="p-4 w-1/4 text-right">Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                    {users.map(u => {
+                         // Manager không được sửa admin
+                         if(u.role === 'admin') return null;
+                         const currentSelected = userRolesState[u.id] || [];
+
+                         return (
+                            <tr key={u.id} className="hover:bg-slate-50">
+                                <td className="p-4 align-top">
+                                    <div className="font-bold text-slate-700 text-base">{u.name}</div>
+                                    <div className="text-slate-400 text-xs font-mono mt-1">@{u.username}</div>
+                                </td>
+                                <td className="p-4">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                        {roles.map(r => {
+                                            const isChecked = currentSelected.includes(r.code);
+                                            return (
+                                                <div key={r.code}
+                                                     onClick={() => toggleRole(u.id, r.code)}
+                                                     className={`cursor-pointer border rounded-lg px-3 py-2 flex items-center gap-2 transition-all select-none ${isChecked ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'}`}
+                                                >
+                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-300'}`}>
+                                                        {isChecked && <CheckCircle2 size={12}/>}
+                                                    </div>
+                                                    <span className="font-medium text-xs">{r.name}</span>
+                                                </div>
+                                            )
+                                        })}
+                                        {/* Tùy chọn Manager (nếu manager muốn cấp quyền manager cho người khác - tuỳ business logic, ở đây cho phép) */}
+                                        <div onClick={() => toggleRole(u.id, 'manager')}
+                                             className={`cursor-pointer border rounded-lg px-3 py-2 flex items-center gap-2 transition-all select-none ${currentSelected.includes('manager') ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                                        >
+                                             <div className={`w-4 h-4 rounded border flex items-center justify-center ${currentSelected.includes('manager') ? 'bg-orange-600 border-orange-600 text-white' : 'bg-white border-slate-300'}`}>
+                                                 {currentSelected.includes('manager') && <CheckCircle2 size={12}/>}
+                                             </div>
+                                             <span className="font-medium text-xs">Quản Lý (Manager)</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td className="p-4 align-top text-right">
+                                    <button
+                                        onClick={() => handleSaveUser(u)}
+                                        disabled={loadingSave === u.id}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-blue-500/30 flex items-center gap-2 ml-auto"
+                                    >
+                                        {loadingSave === u.id ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu
+                                    </button>
+                                </td>
+                            </tr>
+                         )
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+}
 
 // --- ADMIN DASHBOARD ---
 const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
@@ -661,7 +777,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
       </div>
       {tab === 'timesheet' && <AdminTimesheet users={users} />}
       {tab === 'statistics' && <AdminStatistics users={users} roles={roles} allTasks={allTasks} />}
-      {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} />}
+      {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} users={users} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -993,12 +1109,13 @@ const AdminTimesheet = ({ users }) => {
   );
 };
 
-// --- UPDATE: SHOW IMAGE PREVIEW IN REPORTS ---
-const AdminReports = ({ allTasks, roles }) => {
+// --- UPDATE: ADMIN REPORTS WITH USER FILTER ---
+const AdminReports = ({ allTasks, roles, users }) => {
    const [viewDate, setViewDate] = useState(getTodayISO());
    const [reportData, setReportData] = useState({});
    const [loading, setLoading] = useState(false);
    const [previewImage, setPreviewImage] = useState(null);
+   const [filterUserId, setFilterUserId] = useState(''); // NEW FILTER STATE
 
    useEffect(() => {
      const fetchData = async () => {
@@ -1015,7 +1132,18 @@ const AdminReports = ({ allTasks, roles }) => {
    }, [viewDate]);
 
    const sortedTasks = sortTasksByTime([...allTasks]);
-   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
+
+   // Logic lọc Roles hiển thị
+   let displayedRoleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
+
+   // Nếu có chọn nhân viên, chỉ hiển thị Role mà nhân viên đó đảm nhận
+   if (filterUserId && users) {
+       const selectedUser = users.find(u => u.id === parseInt(filterUserId) || u.id === filterUserId);
+       if (selectedUser) {
+           const userRoles = selectedUser.role.split(',').map(r => r.trim());
+           displayedRoleKeys = displayedRoleKeys.filter(key => userRoles.includes(key));
+       }
+   }
 
    return (
       <div className="space-y-6 relative">
@@ -1026,14 +1154,34 @@ const AdminReports = ({ allTasks, roles }) => {
               </div>
           )}
 
-          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
-              <span className="text-slate-500 font-bold text-sm">Xem ngày:</span>
-              <input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm font-bold"/>
-              {loading && <span className="text-blue-600 text-xs font-bold animate-pulse">Đang tải dữ liệu...</span>}
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500 font-bold text-sm">Xem ngày:</span>
+                <input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm font-bold"/>
+              </div>
+
+              {/* USER FILTER DROPDOWN */}
+              {users && (
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <span className="text-slate-500 font-bold text-sm whitespace-nowrap"><Filter size={14} className="inline mr-1"/>Lọc nhân viên:</span>
+                      <select
+                        className="border rounded-lg px-3 py-1.5 text-sm font-bold w-full sm:w-48"
+                        value={filterUserId}
+                        onChange={(e) => setFilterUserId(e.target.value)}
+                      >
+                          <option value="">-- Tất cả --</option>
+                          {users.map(u => (
+                              <option key={u.id} value={u.id}>{u.name}</option>
+                          ))}
+                      </select>
+                  </div>
+              )}
+
+              {loading && <span className="text-blue-600 text-xs font-bold animate-pulse ml-auto">Đang tải dữ liệu...</span>}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {roleKeys.map(roleKey => {
+            {displayedRoleKeys.map(roleKey => {
                const roleObj = roles.find(r => r.code === roleKey);
                const roleName = roleObj ? roleObj.name : roleKey;
                const roleTasks = sortedTasks.filter(t => t.role === roleKey);
@@ -1082,6 +1230,11 @@ const AdminReports = ({ allTasks, roles }) => {
                   </div>
                )
             })}
+             {displayedRoleKeys.length === 0 && (
+                <div className="col-span-full text-center py-10 text-slate-400 italic">
+                    Không có công việc nào hoặc nhân viên này chưa được phân công.
+                </div>
+            )}
           </div>
       </div>
    )
@@ -1172,7 +1325,7 @@ const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
    )
 };
 
-// --- FIX & UPDATE: QUẢN LÝ NHÂN SỰ (MULTI-ROLE SELECTION) ---
+// --- ADMIN USER MANAGER (FULL ACCESS) ---
 const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   const [editingUser, setEditingUser] = useState(null);
   const [formData, setFormData] = useState({ username: '', password: '', name: '', role: [] });
