@@ -6,7 +6,8 @@ import {
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle,
-  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter, ChevronRight
+  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter, ChevronRight,
+  Eye, EyeOff, UserCog
 } from 'lucide-react';
 
 // --- STYLES ---
@@ -121,11 +122,15 @@ export default function App() {
       if (error || !data) throw new Error("Sai thông tin đăng nhập");
 
       setUser(data);
-      if(data.role !== 'admin') {
+      if (data.role === 'admin') {
+         fetchAllDataAdmin();
+      } else if (data.role === 'manager') {
+         // Manager cần danh sách user và roles để phân công, và tasks để giám sát
+         fetchAllDataManager();
+      } else {
+         // Staff
          fetchTasksConfig(data.role);
          fetchTodayReport(data.role);
-      } else {
-         fetchAllDataAdmin();
       }
     } catch (err) {
       showNotify(setNotification, err.message, "error");
@@ -178,6 +183,26 @@ export default function App() {
     }
   };
 
+  const fetchAllDataManager = async () => {
+     try {
+        const today = getTodayISO();
+        // Manager cần thấy nhân viên (trừ admin)
+        const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
+        setUsersList(uData || []);
+        const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
+        setRolesList(rData || []);
+        const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
+        setTasksConfig(tData || []);
+        // Lấy báo cáo để giám sát
+        const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
+        const reportMap = {};
+        if(repData) repData.forEach(r => reportMap[r.role] = r.data);
+        setChecklistData(reportMap);
+     } catch (error) {
+        showNotify(setNotification, "Lỗi tải dữ liệu quản lý", "error");
+     }
+  };
+
   if (!user) return <ModernLogin loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} loading={loading} />;
 
   return (
@@ -213,7 +238,7 @@ export default function App() {
               <div>
                 <h1 className="font-bold text-slate-800 text-sm lg:text-base">{user.name}</h1>
                 <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase">
-                   {user.role}
+                   {user.role === 'manager' ? 'Quản Lý' : user.role}
                 </span>
               </div>
             </div>
@@ -245,6 +270,15 @@ export default function App() {
                 initialReports={checklistData}
                 onRefresh={fetchAllDataAdmin}
                 setNotify={(m, t) => showNotify(setNotification, m, t)}
+              />
+            ) : user.role === 'manager' ? (
+              <ManagerDashboard
+                 users={usersList}
+                 roles={rolesList}
+                 allTasks={tasksConfig}
+                 initialReports={checklistData}
+                 onRefresh={fetchAllDataManager}
+                 setNotify={(m, t) => showNotify(setNotification, m, t)}
               />
             ) : (
               <StaffDashboard
@@ -498,8 +532,86 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
   };
 
 // ==========================================
-// ADMIN DASHBOARD
+// MANAGER DASHBOARD (NEW)
 // ==========================================
+const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
+   const [tab, setTab] = useState('assign'); // assign, monitor
+
+   return (
+      <div>
+         <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1">
+            <button onClick={() => setTab('assign')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'assign' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
+               <UserCog size={18}/> Phân Công
+            </button>
+            <button onClick={() => setTab('monitor')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'monitor' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
+               <LayoutDashboard size={18}/> Giám Sát Tiến Độ
+            </button>
+            <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
+         </div>
+
+         {tab === 'assign' && <ManagerAssignment users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
+         {tab === 'monitor' && <AdminReports allTasks={allTasks} roles={roles} />}
+      </div>
+   );
+};
+
+const ManagerAssignment = ({ users, roles, onRefresh, setNotify }) => {
+   const handleChangeRole = async (userId, newRole) => {
+      try {
+         const { error } = await supabase.from('app_users').update({ role: newRole }).eq('id', userId);
+         if (error) throw error;
+         setNotify("Đã chuyển khu vực làm việc", "success");
+         onRefresh();
+      } catch (err) {
+         setNotify("Lỗi cập nhật", "error");
+      }
+   };
+
+   return (
+      <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+         <div className="p-4 bg-slate-50 border-b font-bold text-slate-700">Danh sách nhân viên & Khu vực hiện tại</div>
+         <table className="w-full text-sm text-left">
+            <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+               <tr>
+                  <th className="p-4">Tên Nhân viên</th>
+                  <th className="p-4">Username</th>
+                  <th className="p-4">Khu vực đang làm</th>
+                  <th className="p-4">Chuyển khu vực</th>
+               </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+               {users.map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50">
+                     <td className="p-4 font-bold text-slate-700">{u.name}</td>
+                     <td className="p-4 font-mono text-slate-500">{u.username}</td>
+                     <td className="p-4">
+                        <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold uppercase">
+                           {roles.find(r => r.code === u.role)?.name || u.role}
+                        </span>
+                     </td>
+                     <td className="p-4">
+                        <select
+                           className="border rounded p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                           value={u.role}
+                           onChange={(e) => handleChangeRole(u.id, e.target.value)}
+                        >
+                           {roles.map(r => (
+                              <option key={r.code} value={r.code}>{r.name}</option>
+                           ))}
+                        </select>
+                     </td>
+                  </tr>
+               ))}
+               {users.length === 0 && <tr><td colSpan="4" className="p-8 text-center text-slate-400">Không có nhân viên nào</td></tr>}
+            </tbody>
+         </table>
+      </div>
+   );
+};
+
+
+
+// --- ADMIN DASHBOARD ---
 const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
   const [tab, setTab] = useState('timesheet');
   return (
@@ -518,7 +630,10 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
       {tab === 'timesheet' && <AdminTimesheet users={users} />}
-      {tab === 'statistics' && <AdminStatistics users={users} roles={roles} />}
+
+      {/* --- SỬA DÒNG DƯỚI ĐÂY: Thêm allTasks={allTasks} --- */}
+      {tab === 'statistics' && <AdminStatistics users={users} roles={roles} allTasks={allTasks} />}
+
       {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -526,9 +641,9 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
     </div>
   );
 };
-
 // --- FIX & UPDATE: THỐNG KÊ CHI TIẾT TỪNG NGÀY ---
-const AdminStatistics = ({ users, roles }) => {
+// --- FIX & UPDATE: THỐNG KÊ CHI TIẾT & TÍNH ĐÚNG TIẾN ĐỘ ---
+const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận thêm allTasks
   const now = new Date();
   const [fromDate, setFromDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
   const [toDate, setToDate] = useState(now.toISOString().split('T')[0]);
@@ -538,7 +653,7 @@ const AdminStatistics = ({ users, roles }) => {
   const [rawChecklists, setRawChecklists] = useState([]);
   const [loading, setLoading] = useState(false);
   const [hourlyRate, setHourlyRate] = useState(25000);
-  const [selectedUserStats, setSelectedUserStats] = useState(null); // State xem chi tiết nhân viên
+  const [selectedUserStats, setSelectedUserStats] = useState(null);
 
   const calculateStats = async () => {
     setLoading(true);
@@ -555,22 +670,30 @@ const AdminStatistics = ({ users, roles }) => {
         .order('log_time', { ascending: true });
       setRawLogs(logsData || []);
 
-      // 2. Logs Công việc (Lọc theo ngày)
+      // 2. Logs Công việc
       const { data: checkData } = await supabase.from('checklist_logs')
         .select('*')
         .gte('report_date', fromDate)
         .lte('report_date', toDate);
       setRawChecklists(checkData || []);
 
-      // 3. Tính toán tổng quan
+      // 3. Tính toán
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
+
+        // --- LOGIC MỚI: Lấy tổng việc từ cấu hình chuẩn (allTasks) ---
+        // Lọc ra danh sách việc chuẩn của Role này
+        const standardTasks = allTasks.filter(t => t.role === user.role);
+        const standardTaskCount = standardTasks.length;
+        // -------------------------------------------------------------
+
         const userLogs = (logsData || []).filter(l => l.user_id === user.id);
 
         let totalMillis = 0;
         let validWorkDays = new Set();
         let currentCheckIn = null;
 
+        // Tính giờ làm
         userLogs.forEach(log => {
              const type = (log.action_type || '').toLowerCase();
              const time = new Date(log.log_time);
@@ -588,15 +711,23 @@ const AdminStatistics = ({ users, roles }) => {
         });
         const totalHours = (totalMillis / (1000 * 60 * 60));
 
+        // Tính KPI
         const userChecklists = (checkData || []).filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
 
+        // Nếu ngày đó có báo cáo, ta lấy mẫu số là standardTaskCount (số việc quy định)
+        // chứ không lấy số việc trong báo cáo (vì có thể nhân viên chưa làm hết việc nên chưa lưu vào db)
         userChecklists.forEach(cl => {
-           const tasks = Object.values(cl.data || {});
-           totalTasksAssigned += tasks.length;
-           totalTasksDone += tasks.filter(t => t.sent).length;
+           // Mẫu số: Luôn là tổng số việc quy định của role
+           totalTasksAssigned += standardTaskCount;
+
+           // Tử số: Đếm số việc đã sent: true trong log
+           const tasksInLog = Object.values(cl.data || {});
+           totalTasksDone += tasksInLog.filter(t => t.sent).length;
         });
+
+        // Tránh chia cho 0 nếu chưa có ngày làm việc nào hoặc role chưa có task
         const completionRate = totalTasksAssigned === 0 ? 0 : Math.round((totalTasksDone / totalTasksAssigned) * 100);
 
         return {
@@ -604,7 +735,9 @@ const AdminStatistics = ({ users, roles }) => {
            workDays: validWorkDays.size,
            totalHours: totalHours.toFixed(1),
            rawHours: totalHours,
-           completionRate
+           completionRate,
+           // Lưu thêm standardCount để dùng cho xem chi tiết
+           standardTaskCount
         };
       }).filter(Boolean);
 
@@ -612,9 +745,8 @@ const AdminStatistics = ({ users, roles }) => {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // Hàm xem chi tiết từng ngày của 1 user
+  // Hàm xem chi tiết từng ngày
   const handleViewUserDetail = (userStat) => {
-    // Tạo danh sách các ngày trong khoảng fromDate -> toDate
     const dates = [];
     let curr = new Date(fromDate);
     const end = new Date(toDate);
@@ -623,9 +755,8 @@ const AdminStatistics = ({ users, roles }) => {
         curr.setDate(curr.getDate() + 1);
     }
 
-    // Xử lý dữ liệu từng ngày
     const detailData = dates.map(dateStr => {
-        // Tìm log trong ngày
+        // Tìm log chấm công
         const dayLogs = rawLogs.filter(l => l.user_id === userStat.id && l.log_time.startsWith(dateStr));
         const checkIn = dayLogs.find(l => l.action_type === 'check_in');
         const checkOut = dayLogs.find(l => l.action_type === 'check_out');
@@ -639,15 +770,19 @@ const AdminStatistics = ({ users, roles }) => {
 
         // Tìm KPI trong ngày
         const dayChecklist = rawChecklists.find(c => c.report_date === dateStr && c.role === userStat.role);
+
         let kpi = 0;
-        let taskText = "0/0";
+        let done = 0;
+        // Mẫu số lấy từ userStat (đã tính ở trên dựa vào allTasks)
+        const total = userStat.standardTaskCount || 0;
+
         if(dayChecklist && dayChecklist.data) {
-            const tasks = Object.values(dayChecklist.data);
-            const done = tasks.filter(t => t.sent).length;
-            const total = tasks.length;
-            if(total > 0) kpi = Math.round((done/total)*100);
-            taskText = `${done}/${total}`;
+            const tasksInLog = Object.values(dayChecklist.data);
+            done = tasksInLog.filter(t => t.sent).length;
         }
+
+        if(total > 0) kpi = Math.round((done/total)*100);
+        const taskText = `${done}/${total}`; // Hiển thị ví dụ: 12/16
 
         return {
             date: dateStr,
@@ -720,6 +855,7 @@ const AdminStatistics = ({ users, roles }) => {
                                             <div className="w-24 bg-slate-200 rounded-full h-2">
                                                 <div className="bg-emerald-500 h-2 rounded-full" style={{width: `${d.kpi}%`}}></div>
                                             </div>
+                                            {/* HIỂN THỊ ĐÚNG VÍ DỤ: 12/16 */}
                                             <span className="text-xs font-bold">{d.kpi}% ({d.taskText})</span>
                                         </div>
                                     </td>
@@ -1011,10 +1147,11 @@ const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
    )
 };
 
-// --- FIX & UPDATE: QUẢN LÝ NHÂN SỰ (EDIT & ADD) ---
+// --- FIX & UPDATE: QUẢN LÝ NHÂN SỰ (EDIT & ADD & SHOW PASSWORD) ---
 const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   const [editingUser, setEditingUser] = useState(null); // State để sửa user
   const [formData, setFormData] = useState({ username: '', password: '', name: '', role: roles[0]?.code || '' });
+  const [showPass, setShowPass] = useState(false); // Toggle show password columns
 
   useEffect(() => {
      if(editingUser) {
@@ -1062,6 +1199,7 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
              <select className="border rounded p-2 text-sm bg-white" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
                  {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
                  <option value="admin">Admin (Quản trị)</option>
+                 <option value="manager">Manager (Quản lý)</option>
              </select>
          </div>
          <div className="flex gap-3 mt-4 justify-end">
@@ -1073,12 +1211,18 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
       </div>
 
       <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+         <div className="p-2 border-b flex justify-end">
+             <button onClick={() => setShowPass(!showPass)} className="text-xs flex items-center gap-1 text-slate-500 hover:text-blue-600 font-bold px-3 py-1 rounded hover:bg-slate-100">
+                {showPass ? <EyeOff size={14}/> : <Eye size={14}/>} {showPass ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+             </button>
+         </div>
          <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
                <tr>
                   <th className="p-4">Nhân viên</th>
                   <th className="p-4">Khu vực (Role)</th>
                   <th className="p-4">Username</th>
+                  <th className="p-4 text-blue-600">Mật khẩu</th>
                   <th className="p-4 text-right">Thao tác</th>
                </tr>
             </thead>
@@ -1086,8 +1230,9 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
                {users.map(u => (
                   <tr key={u.id} className="hover:bg-slate-50">
                      <td className="p-4 font-bold text-slate-700">{u.name}</td>
-                     <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold uppercase text-slate-500">{u.role}</span></td>
+                     <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${u.role === 'admin' ? 'bg-purple-100 text-purple-600' : (u.role === 'manager' ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500')}`}>{u.role}</span></td>
                      <td className="p-4 font-mono text-slate-500">{u.username}</td>
+                     <td className="p-4 font-mono text-slate-600">{showPass ? u.password : '••••••'}</td>
                      <td className="p-4 text-right flex justify-end gap-2">
                         <button onClick={() => setEditingUser(u)} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><Edit3 size={18}/></button>
                         <button onClick={() => handleDelete(u.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18}/></button>
