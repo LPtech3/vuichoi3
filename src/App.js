@@ -7,7 +7,7 @@ import {
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle,
   Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter, ChevronRight,
-  Eye, EyeOff, UserCog
+  Eye, EyeOff, UserCog, Layers
 } from 'lucide-react';
 
 // --- STYLES ---
@@ -23,6 +23,10 @@ const CustomStyles = () => (
     }
     .animate-bounce-short {
       animation: bounce 0.5s 1;
+    }
+    /* Hide file input default style */
+    input[type="file"] {
+        display: none;
     }
   `}</style>
 );
@@ -92,6 +96,39 @@ const sortTasksByTime = (tasks) => {
     });
 };
 
+// --- NEW UTIL: COMPRESS IMAGE TO < 300KB ---
+const processImageInput = (file, maxSizeMB = 0.3) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                // Resize logic: Max width 1024px to reduce size drastically first
+                const MAX_WIDTH = 1024;
+                const scaleSize = MAX_WIDTH / img.width;
+                const width = (scaleSize < 1) ? MAX_WIDTH : img.width;
+                const height = (scaleSize < 1) ? img.height * scaleSize : img.height;
+
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // Convert to JPEG with quality adjustment
+                // Start with 0.7 quality
+                canvas.toBlob((blob) => {
+                    resolve(blob);
+                }, 'image/jpeg', 0.7);
+            };
+            img.onerror = (err) => reject(err);
+        };
+        reader.onerror = (err) => reject(err);
+    });
+};
+
 // --- MAIN APP COMPONENT ---
 export default function App() {
   const [user, setUser] = useState(null);
@@ -124,11 +161,10 @@ export default function App() {
       setUser(data);
       if (data.role === 'admin') {
          fetchAllDataAdmin();
-      } else if (data.role === 'manager') {
-         // Manager cần danh sách user và roles để phân công, và tasks để giám sát
+      } else if (data.role.includes('manager')) {
          fetchAllDataManager();
       } else {
-         // Staff
+         // Staff: Role có thể là "bep,phucvu" -> Cần fetch tất cả task của các role này
          fetchTasksConfig(data.role);
          fetchTodayReport(data.role);
       }
@@ -154,15 +190,26 @@ export default function App() {
     }
   }
 
-  const fetchTasksConfig = async (role) => {
-    const { data } = await supabase.from('task_definitions').select('*').eq('role', role).order('time_label', { ascending: true });
+  const fetchTasksConfig = async (roleString) => {
+    // roleString có thể là "bep,bar". Cần split ra
+    const roles = roleString.split(',').map(r => r.trim());
+    const { data } = await supabase.from('task_definitions').select('*').in('role', roles).order('time_label', { ascending: true });
     if(data) setTasksConfig(data);
   };
 
-  const fetchTodayReport = async (role) => {
+  const fetchTodayReport = async (roleString) => {
     const today = getTodayISO();
-    const { data } = await supabase.from('checklist_logs').select('data').eq('report_date', today).eq('role', role).single();
-    if (data) setChecklistData(prev => ({...prev, [role]: data.data || {}}));
+    const roles = roleString.split(',').map(r => r.trim());
+    // Fetch logs cho tất cả role mà user đảm nhận
+    const { data } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today).in('role', roles);
+
+    const combinedData = {};
+    if (data) {
+        data.forEach(item => {
+            combinedData[item.role] = item.data || {};
+        });
+    }
+    setChecklistData(combinedData);
   };
 
   const fetchAllDataAdmin = async () => {
@@ -186,14 +233,12 @@ export default function App() {
   const fetchAllDataManager = async () => {
      try {
         const today = getTodayISO();
-        // Manager cần thấy nhân viên (trừ admin)
         const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
         setUsersList(uData || []);
         const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
         setRolesList(rData || []);
         const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
         setTasksConfig(tData || []);
-        // Lấy báo cáo để giám sát
         const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
         const reportMap = {};
         if(repData) repData.forEach(r => reportMap[r.role] = r.data);
@@ -204,6 +249,9 @@ export default function App() {
   };
 
   if (!user) return <ModernLogin loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} loading={loading} />;
+
+  // Xử lý Role hiển thị trên UI
+  const displayRole = user.role === 'admin' ? 'Quản Trị Viên' : (user.role.includes('manager') ? 'Quản Lý' : 'Nhân Viên');
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
@@ -238,7 +286,7 @@ export default function App() {
               <div>
                 <h1 className="font-bold text-slate-800 text-sm lg:text-base">{user.name}</h1>
                 <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full uppercase">
-                   {user.role === 'manager' ? 'Quản Lý' : user.role}
+                   {displayRole}
                 </span>
               </div>
             </div>
@@ -271,7 +319,7 @@ export default function App() {
                 onRefresh={fetchAllDataAdmin}
                 setNotify={(m, t) => showNotify(setNotification, m, t)}
               />
-            ) : user.role === 'manager' ? (
+            ) : user.role.includes('manager') ? (
               <ManagerDashboard
                  users={usersList}
                  roles={rolesList}
@@ -284,8 +332,8 @@ export default function App() {
               <StaffDashboard
                 user={user}
                 tasks={tasksConfig}
-                reportData={checklistData[user.role] || {}}
-                onUpdateLocal={(newData) => setChecklistData({...checklistData, [user.role]: newData})}
+                checklistData={checklistData}
+                onUpdateLocal={setChecklistData}
                 setNotify={(m, t) => showNotify(setNotification, m, t)}
               />
             )}
@@ -327,9 +375,16 @@ const ModernLogin = ({ loginForm, setLoginForm, handleLogin, notification, loadi
 );
 
 // ==========================================
-// STAFF COMPONENTS
+// STAFF COMPONENTS (MULTI-ROLE & IMAGE COMPRESSION)
 // ==========================================
-const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
+const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }) => {
+    const userRoles = user.role.split(',').map(r => r.trim());
+    const [activeRole, setActiveRole] = useState(userRoles[0]);
+
+    // Switch role logic
+    const displayedTasks = tasks.filter(t => t.role === activeRole);
+    const reportData = checklistData[activeRole] || {};
+
     const [attendance, setAttendance] = useState({ in: null, out: null });
     const [loadingSend, setLoadingSend] = useState(null);
     const [attLoading, setAttLoading] = useState(false);
@@ -361,14 +416,17 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
       if (!file) return;
 
       setAttLoading(true);
-      setNotify("Đang định vị và tải ảnh...", "info");
+      setNotify("Đang xử lý ảnh và GPS...", "info");
 
       try {
          const location = await getCurrentLocation();
-         const fileExt = file.name.split('.').pop();
+
+         // NÉN ẢNH
+         const compressedBlob = await processImageInput(file);
+         const fileExt = "jpg";
          const fileName = `attendance/${user.username}_${type}_${Date.now()}.${fileExt}`;
 
-         const { error: uploadError } = await supabase.storage.from('task-images').upload(fileName, file);
+         const { error: uploadError } = await supabase.storage.from('task-images').upload(fileName, compressedBlob, { contentType: 'image/jpeg' });
          if (uploadError) throw uploadError;
 
          const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(fileName);
@@ -402,7 +460,10 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
           updatedItem = { ...updatedItem, done: isDone, time: isDone ? new Date().toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : '' };
        } else if (actionType === 'input') updatedItem.val = value;
        else if (actionType === 'image') updatedItem.imageUrl = value;
-       onUpdateLocal({ ...reportData, [taskDefId]: updatedItem });
+
+       // Update nested state
+       const newRoleData = { ...reportData, [taskDefId]: updatedItem };
+       onUpdateLocal(prev => ({ ...prev, [activeRole]: newRoleData }));
     };
 
     const sendSingleTask = async (taskDefId) => {
@@ -416,15 +477,15 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
        try {
          const newItem = { ...item, sent: true };
          const newReportData = { ...reportData, [taskDefId]: newItem };
-         onUpdateLocal(newReportData);
 
-         const { error } = await supabase.from('checklist_logs').upsert({ report_date: getTodayISO(), role: user.role, data: newReportData }, { onConflict: 'report_date, role' });
+         // Optimistic Update
+         onUpdateLocal(prev => ({ ...prev, [activeRole]: newReportData }));
+
+         const { error } = await supabase.from('checklist_logs').upsert({ report_date: getTodayISO(), role: activeRole, data: newReportData }, { onConflict: 'report_date, role' });
          if(error) throw error;
 
          setNotify("Đã gửi báo cáo!");
        } catch (err) {
-         const revertedItem = { ...item, sent: false };
-         onUpdateLocal({ ...reportData, [taskDefId]: revertedItem });
          setNotify("Gửi lỗi, vui lòng thử lại", "error");
        } finally { setLoadingSend(null); }
     };
@@ -433,51 +494,69 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
       const file = e.target.files[0];
       if (!file) return;
       try {
-        setNotify("Đang tải ảnh...", "info");
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${user.username}_${taskDefId}_${Date.now()}.${fileExt}`;
-        const { error } = await supabase.storage.from('task-images').upload(fileName, file);
+        setNotify("Đang nén và tải ảnh...", "info");
+
+        // NÉN ẢNH
+        const compressedBlob = await processImageInput(file);
+        const fileName = `${user.username}_${taskDefId}_${Date.now()}.jpg`;
+
+        const { error } = await supabase.storage.from('task-images').upload(fileName, compressedBlob, { contentType: 'image/jpeg' });
         if (error) throw error;
         const { data: { publicUrl } } = supabase.storage.from('task-images').getPublicUrl(fileName);
         handleTaskAction(taskDefId, 'image', publicUrl);
         setNotify("Tải ảnh thành công");
-      } catch (error) { setNotify("Lỗi tải ảnh", "error"); }
+      } catch (error) { setNotify("Lỗi tải ảnh: " + error.message, "error"); }
     };
 
-    const totalTasks = tasks.length;
-    const completedTasks = tasks.filter(t => reportData[t.id]?.sent).length;
+    const totalTasks = displayedTasks.length;
+    const completedTasks = displayedTasks.filter(t => reportData[t.id]?.sent).length;
     const progressPercent = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
 
     return (
       <div className="space-y-6">
+        {/* TAB ROLE SWITCHER */}
+        {userRoles.length > 1 && (
+            <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 p-1">
+                {userRoles.map(r => (
+                    <button
+                        key={r}
+                        onClick={() => setActiveRole(r)}
+                        className={`flex-1 py-3 px-4 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeRole === r ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
+                    >
+                       <Layers size={16}/> {r.toUpperCase()}
+                    </button>
+                ))}
+            </div>
+        )}
+
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
            <div className="flex justify-between items-end mb-2">
-              <span className="font-bold text-slate-700">Tiến độ hôm nay</span>
+              <span className="font-bold text-slate-700">Tiến độ ({activeRole})</span>
               <span className="text-blue-600 font-bold text-lg">{progressPercent}%</span>
            </div>
            <div className="w-full bg-slate-100 rounded-full h-2.5">
               <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%` }}></div>
            </div>
-           <p className="text-xs text-slate-400 mt-2 text-right">{completedTasks}/{totalTasks} công việc đã gửi</p>
         </div>
 
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
-           <div><h2 className="text-xl font-bold text-slate-800">Chấm công</h2><p className="text-slate-500 text-sm">Chụp ảnh để vào/ra ca</p></div>
+           <div><h2 className="text-xl font-bold text-slate-800">Chấm công</h2><p className="text-slate-500 text-sm">Chụp ảnh selfie để vào/ra ca</p></div>
 
            {attLoading ? (
              <div className="flex items-center gap-2 text-blue-600 font-bold bg-blue-50 px-6 py-3 rounded-xl animate-pulse">
-               <Loader2 className="animate-spin"/> Đang xử lý GPS...
+               <Loader2 className="animate-spin"/> Đang xử lý...
              </div>
            ) : (
              <div className="flex gap-3">
                 <div className="relative">
-                   <input type="file" accept="image/*" capture="user" id="att-in" className="hidden" disabled={!!attendance.in} onChange={(e) => handleAttendanceCapture(e, 'check_in')} />
+                   {/* CAPTURE="USER" forces Front Camera on mobile */}
+                   <input type="file" accept="image/*" capture="user" id="att-in" disabled={!!attendance.in} onChange={(e) => handleAttendanceCapture(e, 'check_in')} />
                    <label htmlFor="att-in" className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.in ? 'bg-slate-100 text-slate-400 cursor-not-allowed pointer-events-none' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/30'}`}>
                      <MapPin size={18} /> {attendance.in ? `Vào: ${attendance.in}` : 'Check In'}
                    </label>
                 </div>
                 <div className="relative">
-                   <input type="file" accept="image/*" capture="user" id="att-out" className="hidden" disabled={!attendance.in || !!attendance.out} onChange={(e) => handleAttendanceCapture(e, 'check_out')} />
+                   <input type="file" accept="image/*" capture="user" id="att-out" disabled={!attendance.in || !!attendance.out} onChange={(e) => handleAttendanceCapture(e, 'check_out')} />
                    <label htmlFor="att-out" className={`px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 cursor-pointer transition-all ${attendance.out ? 'bg-slate-100 text-slate-400 pointer-events-none' : (!attendance.in ? 'opacity-50 cursor-not-allowed pointer-events-none' : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100')}`}>
                      <LogOut size={18} /> {attendance.out ? `Ra: ${attendance.out}` : 'Check Out'}
                    </label>
@@ -487,7 +566,7 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
         </div>
 
         <div className="grid gap-4">
-          {tasks.map((task) => {
+          {displayedTasks.map((task) => {
             const item = reportData[task.id] || {};
             const isDone = item.done;
             const isSent = item.sent;
@@ -518,7 +597,15 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
                      </div>
                      <div className="flex flex-col sm:flex-row gap-3 items-end sm:items-center mt-2 md:mt-0 pl-12 md:pl-0">
                         {task.require_input && <input disabled={!isDone || isSent} value={item.val || ''} onChange={(e) => handleTaskAction(task.id, 'input', e.target.value)} placeholder="Nhập số..." className="w-full sm:w-24 px-3 py-2 text-sm border rounded-lg text-center bg-slate-50"/>}
-                        {task.require_image && (<div className="relative"><input type="file" id={`file-${task.id}`} className="hidden" accept="image/*" disabled={!isDone || isSent} onChange={(e) => handleImageUpload(e, task.id)}/><label htmlFor={`file-${task.id}`} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border cursor-pointer ${!isDone || isSent ? 'bg-slate-100' : 'bg-white'}`}>{item.imageUrl ? <span className="text-indigo-600 flex gap-1"><ImageIcon size={16}/>Xem</span> : <span><Camera size={16}/>Ảnh</span>}</label></div>)}
+                        {task.require_image && (
+                           <div className="relative">
+                              {/* CAPTURE="ENVIRONMENT" forces Back Camera on mobile */}
+                              <input type="file" id={`file-${task.id}`} className="hidden" accept="image/*" capture="environment" disabled={!isDone || isSent} onChange={(e) => handleImageUpload(e, task.id)}/>
+                              <label htmlFor={`file-${task.id}`} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border cursor-pointer ${!isDone || isSent ? 'bg-slate-100' : 'bg-white'}`}>
+                                 {item.imageUrl ? <span className="text-indigo-600 flex gap-1"><ImageIcon size={16}/>Đã chụp</span> : <span><Camera size={16}/>Chụp</span>}
+                              </label>
+                           </div>
+                        )}
                         {isDone && !isSent && <button onClick={() => sendSingleTask(task.id)} disabled={loadingSend === task.id} className="w-10 h-10 bg-blue-600 text-white rounded-lg flex items-center justify-center shadow-lg">{loadingSend === task.id ? <Loader2 className="animate-spin" size={18}/> : <Send size={18}/>}</button>}
                         {isSent && <span className="text-emerald-600 font-bold text-xs bg-emerald-100 px-3 py-2 rounded-lg"><CheckCircle2 size={14} className="inline"/> Đã gửi</span>}
                      </div>
@@ -532,11 +619,10 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
   };
 
 // ==========================================
-// MANAGER DASHBOARD (NEW)
+// MANAGER DASHBOARD
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-   const [tab, setTab] = useState('assign'); // assign, monitor
-
+   const [tab, setTab] = useState('assign');
    return (
       <div>
          <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1">
@@ -549,67 +635,11 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
             <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
          </div>
 
-         {tab === 'assign' && <ManagerAssignment users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
+         {tab === 'assign' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
          {tab === 'monitor' && <AdminReports allTasks={allTasks} roles={roles} />}
       </div>
    );
 };
-
-const ManagerAssignment = ({ users, roles, onRefresh, setNotify }) => {
-   const handleChangeRole = async (userId, newRole) => {
-      try {
-         const { error } = await supabase.from('app_users').update({ role: newRole }).eq('id', userId);
-         if (error) throw error;
-         setNotify("Đã chuyển khu vực làm việc", "success");
-         onRefresh();
-      } catch (err) {
-         setNotify("Lỗi cập nhật", "error");
-      }
-   };
-
-   return (
-      <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-         <div className="p-4 bg-slate-50 border-b font-bold text-slate-700">Danh sách nhân viên & Khu vực hiện tại</div>
-         <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
-               <tr>
-                  <th className="p-4">Tên Nhân viên</th>
-                  <th className="p-4">Username</th>
-                  <th className="p-4">Khu vực đang làm</th>
-                  <th className="p-4">Chuyển khu vực</th>
-               </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-               {users.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50">
-                     <td className="p-4 font-bold text-slate-700">{u.name}</td>
-                     <td className="p-4 font-mono text-slate-500">{u.username}</td>
-                     <td className="p-4">
-                        <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold uppercase">
-                           {roles.find(r => r.code === u.role)?.name || u.role}
-                        </span>
-                     </td>
-                     <td className="p-4">
-                        <select
-                           className="border rounded p-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                           value={u.role}
-                           onChange={(e) => handleChangeRole(u.id, e.target.value)}
-                        >
-                           {roles.map(r => (
-                              <option key={r.code} value={r.code}>{r.name}</option>
-                           ))}
-                        </select>
-                     </td>
-                  </tr>
-               ))}
-               {users.length === 0 && <tr><td colSpan="4" className="p-8 text-center text-slate-400">Không có nhân viên nào</td></tr>}
-            </tbody>
-         </table>
-      </div>
-   );
-};
-
-
 
 // --- ADMIN DASHBOARD ---
 const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
@@ -620,7 +650,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
         {[
            {id: 'timesheet', icon: CalendarClock, label: 'Giám Sát'},
            {id: 'statistics', icon: BarChart3, label: 'Thống Kê & Lương'},
-           {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ'},
+           {id: 'reports', icon: LayoutDashboard, label: 'Tiến Độ (Ảnh)'},
            {id: 'users', icon: Users, label: 'Nhân Sự'},
            {id: 'tasks', icon: ListTodo, label: 'Cấu Hình Việc'},
            {id: 'roles', icon: Briefcase, label: 'Khu Vực'}
@@ -630,10 +660,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
       {tab === 'timesheet' && <AdminTimesheet users={users} />}
-
-      {/* --- SỬA DÒNG DƯỚI ĐÂY: Thêm allTasks={allTasks} --- */}
       {tab === 'statistics' && <AdminStatistics users={users} roles={roles} allTasks={allTasks} />}
-
       {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -641,9 +668,8 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
     </div>
   );
 };
-// --- FIX & UPDATE: THỐNG KÊ CHI TIẾT TỪNG NGÀY ---
-// --- FIX & UPDATE: THỐNG KÊ CHI TIẾT & TÍNH ĐÚNG TIẾN ĐỘ ---
-const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận thêm allTasks
+
+const AdminStatistics = ({ users, roles, allTasks }) => {
   const now = new Date();
   const [fromDate, setFromDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
   const [toDate, setToDate] = useState(now.toISOString().split('T')[0]);
@@ -662,7 +688,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
       const start = `${fromDate}T00:00:00`;
       const end = `${toDate}T23:59:59`;
 
-      // 1. Logs Chấm công
       const { data: logsData } = await supabase.from('time_logs')
         .select('*')
         .gte('log_time', start)
@@ -670,30 +695,24 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
         .order('log_time', { ascending: true });
       setRawLogs(logsData || []);
 
-      // 2. Logs Công việc
       const { data: checkData } = await supabase.from('checklist_logs')
         .select('*')
         .gte('report_date', fromDate)
         .lte('report_date', toDate);
       setRawChecklists(checkData || []);
 
-      // 3. Tính toán
       const processed = users.map(user => {
-        if (filterRole && user.role !== filterRole) return null;
+        if (filterRole && !user.role.includes(filterRole)) return null;
 
-        // --- LOGIC MỚI: Lấy tổng việc từ cấu hình chuẩn (allTasks) ---
-        // Lọc ra danh sách việc chuẩn của Role này
-        const standardTasks = allTasks.filter(t => t.role === user.role);
+        const userRoles = user.role.split(',').map(r => r.trim());
+        const standardTasks = allTasks.filter(t => userRoles.includes(t.role));
         const standardTaskCount = standardTasks.length;
-        // -------------------------------------------------------------
 
         const userLogs = (logsData || []).filter(l => l.user_id === user.id);
-
         let totalMillis = 0;
         let validWorkDays = new Set();
         let currentCheckIn = null;
 
-        // Tính giờ làm
         userLogs.forEach(log => {
              const type = (log.action_type || '').toLowerCase();
              const time = new Date(log.log_time);
@@ -711,23 +730,16 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
         });
         const totalHours = (totalMillis / (1000 * 60 * 60));
 
-        // Tính KPI
-        const userChecklists = (checkData || []).filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
+        const userChecklists = (checkData || []).filter(c => userRoles.includes(c.role));
 
-        // Nếu ngày đó có báo cáo, ta lấy mẫu số là standardTaskCount (số việc quy định)
-        // chứ không lấy số việc trong báo cáo (vì có thể nhân viên chưa làm hết việc nên chưa lưu vào db)
         userChecklists.forEach(cl => {
-           // Mẫu số: Luôn là tổng số việc quy định của role
            totalTasksAssigned += standardTaskCount;
-
-           // Tử số: Đếm số việc đã sent: true trong log
            const tasksInLog = Object.values(cl.data || {});
            totalTasksDone += tasksInLog.filter(t => t.sent).length;
         });
 
-        // Tránh chia cho 0 nếu chưa có ngày làm việc nào hoặc role chưa có task
         const completionRate = totalTasksAssigned === 0 ? 0 : Math.round((totalTasksDone / totalTasksAssigned) * 100);
 
         return {
@@ -736,7 +748,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
            totalHours: totalHours.toFixed(1),
            rawHours: totalHours,
            completionRate,
-           // Lưu thêm standardCount để dùng cho xem chi tiết
            standardTaskCount
         };
       }).filter(Boolean);
@@ -745,7 +756,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // Hàm xem chi tiết từng ngày
   const handleViewUserDetail = (userStat) => {
     const dates = [];
     let curr = new Date(fromDate);
@@ -754,9 +764,9 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
         dates.push(curr.toISOString().split('T')[0]);
         curr.setDate(curr.getDate() + 1);
     }
+    const userRoles = userStat.role.split(',');
 
     const detailData = dates.map(dateStr => {
-        // Tìm log chấm công
         const dayLogs = rawLogs.filter(l => l.user_id === userStat.id && l.log_time.startsWith(dateStr));
         const checkIn = dayLogs.find(l => l.action_type === 'check_in');
         const checkOut = dayLogs.find(l => l.action_type === 'check_out');
@@ -768,21 +778,21 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
             if(outTime > inTime) workHours = (outTime - inTime) / (1000 * 60 * 60);
         }
 
-        // Tìm KPI trong ngày
-        const dayChecklist = rawChecklists.find(c => c.report_date === dateStr && c.role === userStat.role);
-
-        let kpi = 0;
         let done = 0;
-        // Mẫu số lấy từ userStat (đã tính ở trên dựa vào allTasks)
         const total = userStat.standardTaskCount || 0;
 
-        if(dayChecklist && dayChecklist.data) {
-            const tasksInLog = Object.values(dayChecklist.data);
-            done = tasksInLog.filter(t => t.sent).length;
-        }
+        // Sum done tasks across all roles for this user on this day
+        userRoles.forEach(r => {
+             const dayChecklist = rawChecklists.find(c => c.report_date === dateStr && c.role === r.trim());
+             if(dayChecklist && dayChecklist.data) {
+                 const tasksInLog = Object.values(dayChecklist.data);
+                 done += tasksInLog.filter(t => t.sent).length;
+             }
+        });
 
+        let kpi = 0;
         if(total > 0) kpi = Math.round((done/total)*100);
-        const taskText = `${done}/${total}`; // Hiển thị ví dụ: 12/16
+        const taskText = `${done}/${total}`;
 
         return {
             date: dateStr,
@@ -799,7 +809,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
 
   return (
     <div className="space-y-6">
-      {/* HEADER BỘ LỌC */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-end">
          <div>
             <label className="text-xs font-bold text-slate-500 block mb-1">Từ ngày</label>
@@ -809,19 +818,11 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
             <label className="text-xs font-bold text-slate-500 block mb-1">Đến ngày</label>
             <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold"/>
          </div>
-         <div className="flex-1">
-            <label className="text-xs font-bold text-slate-500 block mb-1">Lọc Khu Vực</label>
-            <select className="w-full border rounded-lg px-3 py-2 text-sm" value={filterRole} onChange={e => setFilterRole(e.target.value)}>
-               <option value="">Tất cả</option>
-               {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-            </select>
-         </div>
          <button onClick={calculateStats} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-500/30">
             {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tính Toán
          </button>
       </div>
 
-      {/* POPUP CHI TIẾT USER */}
       {selectedUserStats && (
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -855,7 +856,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
                                             <div className="w-24 bg-slate-200 rounded-full h-2">
                                                 <div className="bg-emerald-500 h-2 rounded-full" style={{width: `${d.kpi}%`}}></div>
                                             </div>
-                                            {/* HIỂN THỊ ĐÚNG VÍ DỤ: 12/16 */}
                                             <span className="text-xs font-bold">{d.kpi}% ({d.taskText})</span>
                                         </div>
                                     </td>
@@ -868,7 +868,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
         </div>
       )}
 
-      {/* SUMMARY DASHBOARD */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Làm</p>
@@ -922,7 +921,6 @@ const AdminStatistics = ({ users, roles, allTasks }) => { // <--- Đã nhận th
   );
 };
 
-// --- FIX: LINK MAP & HIỂN THỊ ---
 const AdminTimesheet = ({ users }) => {
   const [viewDate, setViewDate] = useState(getTodayISO());
   const [logs, setLogs] = useState([]);
@@ -958,7 +956,7 @@ const AdminTimesheet = ({ users }) => {
                <th className="p-4">Thời gian</th>
                <th className="p-4">Nhân viên</th>
                <th className="p-4">Hành động</th>
-               <th className="p-4">Ảnh</th>
+               <th className="p-4">Ảnh Check-in</th>
                <th className="p-4">Vị trí (Map)</th>
              </tr>
            </thead>
@@ -973,11 +971,15 @@ const AdminTimesheet = ({ users }) => {
                     </span>
                  </td>
                  <td className="p-4">
-                    {log.image_url ? <a href={log.image_url} target="_blank" className="text-blue-600 underline text-xs">Xem ảnh</a> : '-'}
+                    {log.image_url ? (
+                        <a href={log.image_url} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded overflow-hidden border border-slate-200 hover:scale-150 transition-transform">
+                             <img src={log.image_url} alt="checkin" className="w-full h-full object-cover" />
+                        </a>
+                    ) : '-'}
                  </td>
                  <td className="p-4">
                     {log.lat ? (
-                       <a href={`http://googleusercontent.com/maps.google.com/?q=${log.lat},${log.lng}`} target="_blank" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
+                       <a href={`http://googleusercontent.com/maps.google.com/?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
                           <MapPin size={14}/> Xem Map
                        </a>
                     ) : <span className="text-slate-400 text-xs">Không có GPS</span>}
@@ -991,11 +993,12 @@ const AdminTimesheet = ({ users }) => {
   );
 };
 
-// --- FIX & UPDATE: BỘ LỌC NGÀY CHO ADMIN REPORTS ---
+// --- UPDATE: SHOW IMAGE PREVIEW IN REPORTS ---
 const AdminReports = ({ allTasks, roles }) => {
    const [viewDate, setViewDate] = useState(getTodayISO());
    const [reportData, setReportData] = useState({});
    const [loading, setLoading] = useState(false);
+   const [previewImage, setPreviewImage] = useState(null);
 
    useEffect(() => {
      const fetchData = async () => {
@@ -1012,19 +1015,23 @@ const AdminReports = ({ allTasks, roles }) => {
    }, [viewDate]);
 
    const sortedTasks = sortTasksByTime([...allTasks]);
-   // If no roles defined, extract from tasks
    const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
 
    return (
-      <div className="space-y-6">
-          {/* Filter Bar */}
+      <div className="space-y-6 relative">
+          {previewImage && (
+              <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+                  <img src={previewImage} alt="Preview" className="max-w-full max-h-full rounded shadow-xl" />
+                  <button className="absolute top-4 right-4 text-white p-2"><X size={32}/></button>
+              </div>
+          )}
+
           <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
               <span className="text-slate-500 font-bold text-sm">Xem ngày:</span>
               <input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm font-bold"/>
               {loading && <span className="text-blue-600 text-xs font-bold animate-pulse">Đang tải dữ liệu...</span>}
           </div>
 
-          {/* Grid Content */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {roleKeys.map(roleKey => {
                const roleObj = roles.find(r => r.code === roleKey);
@@ -1043,13 +1050,31 @@ const AdminReports = ({ allTasks, roles }) => {
                         <h3 className="font-bold text-slate-700">{roleName}</h3>
                         <span className={`text-xs font-bold px-2 py-1 rounded ${percent===100?'bg-emerald-100 text-emerald-600':'bg-blue-100 text-blue-600'}`}>{percent}%</span>
                      </div>
-                     <div className="p-4 space-y-3">
+                     <div className="divide-y divide-slate-50">
                         {roleTasks.map(t => {
                            const item = roleReport[t.id] || {};
                            return (
-                              <div key={t.id} className="flex items-center justify-between text-sm">
-                                 <span className={item.sent ? 'text-slate-400 line-through' : 'text-slate-700'}>{t.title}</span>
-                                 {item.sent ? <CheckCircle2 size={16} className="text-emerald-500"/> : <span className="text-xs text-slate-400">Chưa làm</span>}
+                              <div key={t.id} className="p-3 flex items-center justify-between text-sm hover:bg-slate-50">
+                                 <div className="flex-1">
+                                     <span className={item.sent ? 'text-slate-500 font-medium' : 'text-slate-400'}>{t.title}</span>
+                                     <div className="flex gap-2 text-xs mt-1">
+                                         {item.time && <span className="text-blue-500">{item.time}</span>}
+                                         {item.val && <span className="bg-slate-100 px-1 rounded">Số: {item.val}</span>}
+                                     </div>
+                                 </div>
+                                 <div className="flex items-center gap-3">
+                                     {/* IMAGE PREVIEW BOX */}
+                                     {item.imageUrl && (
+                                         <div
+                                            onClick={() => setPreviewImage(item.imageUrl)}
+                                            className="w-10 h-10 bg-slate-100 rounded border border-slate-200 overflow-hidden cursor-pointer hover:ring-2 ring-blue-500 transition-all"
+                                         >
+                                             <img src={item.imageUrl} alt="img" className="w-full h-full object-cover" />
+                                         </div>
+                                     )}
+
+                                     {item.sent ? <CheckCircle2 size={18} className="text-emerald-500"/> : <span className="w-4 h-4 rounded-full border border-slate-300"></span>}
+                                 </div>
                               </div>
                            )
                         })}
@@ -1147,42 +1172,60 @@ const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
    )
 };
 
-// --- FIX & UPDATE: QUẢN LÝ NHÂN SỰ (EDIT & ADD & SHOW PASSWORD) ---
+// --- FIX & UPDATE: QUẢN LÝ NHÂN SỰ (MULTI-ROLE SELECTION) ---
 const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
-  const [editingUser, setEditingUser] = useState(null); // State để sửa user
-  const [formData, setFormData] = useState({ username: '', password: '', name: '', role: roles[0]?.code || '' });
-  const [showPass, setShowPass] = useState(false); // Toggle show password columns
+  const [editingUser, setEditingUser] = useState(null);
+  const [formData, setFormData] = useState({ username: '', password: '', name: '', role: [] });
+  const [showPass, setShowPass] = useState(false);
 
   useEffect(() => {
      if(editingUser) {
-        setFormData({ username: editingUser.username, password: editingUser.password, name: editingUser.name, role: editingUser.role });
+        // Chuyển role string "a,b" thành array ["a","b"]
+        const roleArray = editingUser.role.split(',').map(r => r.trim());
+        setFormData({
+            username: editingUser.username,
+            password: editingUser.password,
+            name: editingUser.name,
+            role: roleArray
+        });
      } else {
-        setFormData({ username: '', password: '', name: '', role: roles[0]?.code || '' });
+        setFormData({ username: '', password: '', name: '', role: [] });
      }
-  }, [editingUser, roles]);
+  }, [editingUser]);
+
+  const handleRoleChange = (roleCode) => {
+      setFormData(prev => {
+          if (prev.role.includes(roleCode)) {
+              return { ...prev, role: prev.role.filter(r => r !== roleCode) };
+          } else {
+              return { ...prev, role: [...prev.role, roleCode] };
+          }
+      });
+  };
 
   const handleSubmit = async () => {
     if(!formData.username || !formData.password || !formData.name) return setNotify("Thiếu thông tin!", "error");
+    if(formData.role.length === 0) return setNotify("Chọn ít nhất 1 role", "error");
+
+    const roleString = formData.role.join(',');
 
     if (editingUser) {
-        // Update
         const { error } = await supabase.from('app_users').update({
             password: formData.password,
             name: formData.name,
-            role: formData.role
+            role: roleString
         }).eq('id', editingUser.id);
         if(error) setNotify("Lỗi cập nhật: " + error.message, "error");
         else { setNotify("Đã cập nhật nhân viên"); setEditingUser(null); onRefresh(); }
     } else {
-        // Insert
-        const { error } = await supabase.from('app_users').insert(formData);
+        const { error } = await supabase.from('app_users').insert({...formData, role: roleString});
         if(error) setNotify("Lỗi thêm: " + error.message, "error");
         else { setNotify("Đã thêm nhân viên"); onRefresh(); }
     }
   };
 
   const handleDelete = async (id) => {
-    if(window.confirm("Xóa nhân viên này? Dữ liệu chấm công sẽ mất.")) {
+    if(window.confirm("Xóa nhân viên này?")) {
         await supabase.from('app_users').delete().eq('id', id);
         onRefresh();
     }
@@ -1192,15 +1235,30 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
     <div className="space-y-6">
       <div className={`p-5 rounded-xl border border-slate-200 transition-colors ${editingUser ? 'bg-orange-50 border-orange-200' : 'bg-white'}`}>
          <h3 className="font-bold text-slate-700 mb-4">{editingUser ? 'Sửa Thông Tin Nhân Viên' : 'Thêm Nhân Viên Mới'}</h3>
-         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-             <input className="border rounded p-2 text-sm" placeholder="Tên đăng nhập" disabled={!!editingUser} value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})}/>
-             <input className="border rounded p-2 text-sm" placeholder="Mật khẩu" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})}/>
-             <input className="border rounded p-2 text-sm" placeholder="Họ và Tên" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
-             <select className="border rounded p-2 text-sm bg-white" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
-                 {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-                 <option value="admin">Admin (Quản trị)</option>
-                 <option value="manager">Manager (Quản lý)</option>
-             </select>
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <div>
+                 <input className="w-full border rounded p-2 text-sm mb-3" placeholder="Tên đăng nhập" disabled={!!editingUser} value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})}/>
+                 <input className="w-full border rounded p-2 text-sm mb-3" placeholder="Mật khẩu" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})}/>
+                 <input className="w-full border rounded p-2 text-sm" placeholder="Họ và Tên" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
+             </div>
+
+             <div className="border rounded p-3 bg-white h-40 overflow-y-auto">
+                 <label className="text-xs font-bold text-slate-500 mb-2 block">Chọn Khu Vực / Chức Vụ (Đa chọn):</label>
+                 <div className="space-y-2">
+                     <label className="flex items-center gap-2 text-sm font-bold text-purple-600">
+                         <input type="checkbox" checked={formData.role.includes('admin')} onChange={() => handleRoleChange('admin')}/> Admin
+                     </label>
+                     <label className="flex items-center gap-2 text-sm font-bold text-orange-600">
+                         <input type="checkbox" checked={formData.role.includes('manager')} onChange={() => handleRoleChange('manager')}/> Manager
+                     </label>
+                     <div className="border-t my-1"></div>
+                     {roles.map(r => (
+                         <label key={r.code} className="flex items-center gap-2 text-sm">
+                             <input type="checkbox" checked={formData.role.includes(r.code)} onChange={() => handleRoleChange(r.code)}/> {r.name}
+                         </label>
+                     ))}
+                 </div>
+             </div>
          </div>
          <div className="flex gap-3 mt-4 justify-end">
              {editingUser && <button onClick={() => setEditingUser(null)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-200 rounded">Hủy</button>}
@@ -1230,7 +1288,15 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
                {users.map(u => (
                   <tr key={u.id} className="hover:bg-slate-50">
                      <td className="p-4 font-bold text-slate-700">{u.name}</td>
-                     <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${u.role === 'admin' ? 'bg-purple-100 text-purple-600' : (u.role === 'manager' ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500')}`}>{u.role}</span></td>
+                     <td className="p-4">
+                         <div className="flex flex-wrap gap-1">
+                             {u.role.split(',').map(r => (
+                                <span key={r} className={`px-2 py-1 rounded text-xs font-bold uppercase ${r.includes('admin') ? 'bg-purple-100 text-purple-600' : (r.includes('manager') ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500')}`}>
+                                    {r}
+                                </span>
+                             ))}
+                         </div>
+                     </td>
                      <td className="p-4 font-mono text-slate-500">{u.username}</td>
                      <td className="p-4 font-mono text-slate-600">{showPass ? u.password : '••••••'}</td>
                      <td className="p-4 text-right flex justify-end gap-2">
