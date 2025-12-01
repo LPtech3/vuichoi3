@@ -519,7 +519,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
       </div>
       {tab === 'timesheet' && <AdminTimesheet users={users} />}
       {tab === 'statistics' && <AdminStatistics users={users} roles={roles} />}
-      {tab === 'reports' && <AdminReports initialReports={initialReports} allTasks={allTasks} roles={roles} />}
+      {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -855,39 +855,73 @@ const AdminTimesheet = ({ users }) => {
   );
 };
 
-const AdminReports = ({ initialReports, allTasks, roles }) => {
+// --- FIX & UPDATE: BỘ LỌC NGÀY CHO ADMIN REPORTS ---
+const AdminReports = ({ allTasks, roles }) => {
+   const [viewDate, setViewDate] = useState(getTodayISO());
+   const [reportData, setReportData] = useState({});
+   const [loading, setLoading] = useState(false);
+
+   useEffect(() => {
+     const fetchData = async () => {
+        setLoading(true);
+        try {
+            const { data } = await supabase.from('checklist_logs').select('role, data').eq('report_date', viewDate);
+            const newMap = {};
+            if(data) data.forEach(item => newMap[item.role] = item.data);
+            setReportData(newMap);
+        } catch(e) { console.error(e); }
+        finally { setLoading(false); }
+     };
+     fetchData();
+   }, [viewDate]);
+
    const sortedTasks = sortTasksByTime([...allTasks]);
+   // If no roles defined, extract from tasks
    const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
+
    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {roleKeys.map(roleKey => {
-           const roleObj = roles.find(r => r.code === roleKey);
-           const roleName = roleObj ? roleObj.name : roleKey;
-           const roleTasks = sortedTasks.filter(t => t.role === roleKey);
-           if (roleTasks.length === 0) return null;
-           const roleReport = initialReports[roleKey] || {};
-           const sentCount = Object.values(roleReport).filter(i => i.sent).length;
-           const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
-           return (
-              <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                 <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                    <h3 className="font-bold text-slate-700">{roleName}</h3>
-                    <span className={`text-xs font-bold px-2 py-1 rounded ${percent===100?'bg-emerald-100 text-emerald-600':'bg-blue-100 text-blue-600'}`}>{percent}%</span>
-                 </div>
-                 <div className="p-4 space-y-3">
-                    {roleTasks.map(t => {
-                       const item = roleReport[t.id] || {};
-                       return (
-                          <div key={t.id} className="flex items-center justify-between text-sm">
-                             <span className={item.sent ? 'text-slate-400 line-through' : 'text-slate-700'}>{t.title}</span>
-                             {item.sent ? <CheckCircle2 size={16} className="text-emerald-500"/> : <span className="text-xs text-slate-400">Chưa làm</span>}
-                          </div>
-                       )
-                    })}
-                 </div>
-              </div>
-           )
-        })}
+      <div className="space-y-6">
+          {/* Filter Bar */}
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+              <span className="text-slate-500 font-bold text-sm">Xem ngày:</span>
+              <input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm font-bold"/>
+              {loading && <span className="text-blue-600 text-xs font-bold animate-pulse">Đang tải dữ liệu...</span>}
+          </div>
+
+          {/* Grid Content */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {roleKeys.map(roleKey => {
+               const roleObj = roles.find(r => r.code === roleKey);
+               const roleName = roleObj ? roleObj.name : roleKey;
+               const roleTasks = sortedTasks.filter(t => t.role === roleKey);
+
+               if (roleTasks.length === 0) return null;
+
+               const roleReport = reportData[roleKey] || {};
+               const sentCount = Object.values(roleReport).filter(i => i.sent).length;
+               const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
+
+               return (
+                  <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                     <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                        <h3 className="font-bold text-slate-700">{roleName}</h3>
+                        <span className={`text-xs font-bold px-2 py-1 rounded ${percent===100?'bg-emerald-100 text-emerald-600':'bg-blue-100 text-blue-600'}`}>{percent}%</span>
+                     </div>
+                     <div className="p-4 space-y-3">
+                        {roleTasks.map(t => {
+                           const item = roleReport[t.id] || {};
+                           return (
+                              <div key={t.id} className="flex items-center justify-between text-sm">
+                                 <span className={item.sent ? 'text-slate-400 line-through' : 'text-slate-700'}>{t.title}</span>
+                                 {item.sent ? <CheckCircle2 size={16} className="text-emerald-500"/> : <span className="text-xs text-slate-400">Chưa làm</span>}
+                              </div>
+                           )
+                        })}
+                     </div>
+                  </div>
+               )
+            })}
+          </div>
       </div>
    )
 };
