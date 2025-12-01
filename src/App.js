@@ -741,7 +741,7 @@ const AdminTimesheet = ({ users }) => {
                  </td>
                  <td className="p-4">
                     {log.lat ? (
-                       <a href={`https://www.google.com/maps/search/?api=1&query=${log.lat},${log.lng}`} target="_blank" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
+                       <a href={`http://googleusercontent.com/maps.google.com/?q=${log.lat},${log.lng}`} target="_blank" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
                           <MapPin size={14}/> Xem Map
                        </a>
                     ) : <span className="text-slate-400 text-xs">Không có GPS</span>}
@@ -805,7 +805,7 @@ const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
      onRefresh();
      setEditing({ id: null, role: editing.role, title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
   };
-  const handleDelete = async (id) => { if(confirm("Xóa việc này?")) { await supabase.from('task_definitions').delete().eq('id', id); onRefresh(); } };
+  const handleDelete = async (id) => { if(window.confirm("Xóa việc này?")) { await supabase.from('task_definitions').delete().eq('id', id); onRefresh(); } };
 
   return (
     <div className="space-y-6">
@@ -911,7 +911,7 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   };
 
   const handleDelete = async (id) => {
-    if(confirm("Xóa nhân viên này? Dữ liệu chấm công sẽ mất.")) {
+    if(window.confirm("Xóa nhân viên này? Dữ liệu chấm công sẽ mất.")) {
         await supabase.from('app_users').delete().eq('id', id);
         onRefresh();
     }
