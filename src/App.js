@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Menu, X, ShieldCheck,
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle,
-  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter
+  Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter, ChevronRight
 } from 'lucide-react';
 
 // --- STYLES ---
@@ -527,7 +527,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
   );
 };
 
-// --- FIX & UPDATE: THỐNG KÊ THEO KHOẢNG NGÀY & KPI ---
+// --- FIX & UPDATE: THỐNG KÊ CHI TIẾT TỪNG NGÀY ---
 const AdminStatistics = ({ users, roles }) => {
   const now = new Date();
   const [fromDate, setFromDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
@@ -538,9 +538,11 @@ const AdminStatistics = ({ users, roles }) => {
   const [rawChecklists, setRawChecklists] = useState([]);
   const [loading, setLoading] = useState(false);
   const [hourlyRate, setHourlyRate] = useState(25000);
+  const [selectedUserStats, setSelectedUserStats] = useState(null); // State xem chi tiết nhân viên
 
   const calculateStats = async () => {
     setLoading(true);
+    setSelectedUserStats(null);
     try {
       const start = `${fromDate}T00:00:00`;
       const end = `${toDate}T23:59:59`;
@@ -560,13 +562,11 @@ const AdminStatistics = ({ users, roles }) => {
         .lte('report_date', toDate);
       setRawChecklists(checkData || []);
 
-      // 3. Tính toán
+      // 3. Tính toán tổng quan
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
-
         const userLogs = (logsData || []).filter(l => l.user_id === user.id);
 
-        // Tính giờ làm
         let totalMillis = 0;
         let validWorkDays = new Set();
         let currentCheckIn = null;
@@ -588,7 +588,6 @@ const AdminStatistics = ({ users, roles }) => {
         });
         const totalHours = (totalMillis / (1000 * 60 * 60));
 
-        // Tính % KPI (Tổng Task hoàn thành / Tổng Task được giao trong khoảng thời gian)
         const userChecklists = (checkData || []).filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
@@ -613,8 +612,59 @@ const AdminStatistics = ({ users, roles }) => {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
+  // Hàm xem chi tiết từng ngày của 1 user
+  const handleViewUserDetail = (userStat) => {
+    // Tạo danh sách các ngày trong khoảng fromDate -> toDate
+    const dates = [];
+    let curr = new Date(fromDate);
+    const end = new Date(toDate);
+    while (curr <= end) {
+        dates.push(curr.toISOString().split('T')[0]);
+        curr.setDate(curr.getDate() + 1);
+    }
+
+    // Xử lý dữ liệu từng ngày
+    const detailData = dates.map(dateStr => {
+        // Tìm log trong ngày
+        const dayLogs = rawLogs.filter(l => l.user_id === userStat.id && l.log_time.startsWith(dateStr));
+        const checkIn = dayLogs.find(l => l.action_type === 'check_in');
+        const checkOut = dayLogs.find(l => l.action_type === 'check_out');
+
+        let workHours = 0;
+        if(checkIn && checkOut) {
+            const inTime = new Date(checkIn.log_time);
+            const outTime = new Date(checkOut.log_time);
+            if(outTime > inTime) workHours = (outTime - inTime) / (1000 * 60 * 60);
+        }
+
+        // Tìm KPI trong ngày
+        const dayChecklist = rawChecklists.find(c => c.report_date === dateStr && c.role === userStat.role);
+        let kpi = 0;
+        let taskText = "0/0";
+        if(dayChecklist && dayChecklist.data) {
+            const tasks = Object.values(dayChecklist.data);
+            const done = tasks.filter(t => t.sent).length;
+            const total = tasks.length;
+            if(total > 0) kpi = Math.round((done/total)*100);
+            taskText = `${done}/${total}`;
+        }
+
+        return {
+            date: dateStr,
+            in: checkIn ? new Date(checkIn.log_time).toLocaleTimeString('vi-VN') : '--:--',
+            out: checkOut ? new Date(checkOut.log_time).toLocaleTimeString('vi-VN') : '--:--',
+            hours: workHours.toFixed(1),
+            kpi,
+            taskText
+        };
+    });
+
+    setSelectedUserStats({ info: userStat, details: detailData });
+  };
+
   return (
     <div className="space-y-6">
+      {/* HEADER BỘ LỌC */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-end">
          <div>
             <label className="text-xs font-bold text-slate-500 block mb-1">Từ ngày</label>
@@ -636,6 +686,53 @@ const AdminStatistics = ({ users, roles }) => {
          </button>
       </div>
 
+      {/* POPUP CHI TIẾT USER */}
+      {selectedUserStats && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+                <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+                    <div>
+                        <h3 className="text-lg font-bold text-slate-800">{selectedUserStats.info.name}</h3>
+                        <p className="text-xs text-slate-500 uppercase">{selectedUserStats.info.role} | {fromDate} - {toDate}</p>
+                    </div>
+                    <button onClick={() => setSelectedUserStats(null)} className="p-2 hover:bg-slate-200 rounded-full"><X size={20}/></button>
+                </div>
+                <div className="overflow-y-auto p-4">
+                    <table className="w-full text-sm text-left border rounded-lg overflow-hidden">
+                        <thead className="bg-slate-100 text-slate-600 font-bold text-xs uppercase">
+                            <tr>
+                                <th className="p-3">Ngày</th>
+                                <th className="p-3">Giờ Vào</th>
+                                <th className="p-3">Giờ Ra</th>
+                                <th className="p-3 text-center">Giờ làm</th>
+                                <th className="p-3">Tiến độ KPI</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {selectedUserStats.details.map((d, idx) => (
+                                <tr key={idx} className="hover:bg-slate-50">
+                                    <td className="p-3 font-mono text-slate-600">{d.date}</td>
+                                    <td className="p-3 font-bold text-blue-600">{d.in}</td>
+                                    <td className="p-3 font-bold text-rose-600">{d.out}</td>
+                                    <td className="p-3 text-center font-bold">{d.hours}h</td>
+                                    <td className="p-3">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-24 bg-slate-200 rounded-full h-2">
+                                                <div className="bg-emerald-500 h-2 rounded-full" style={{width: `${d.kpi}%`}}></div>
+                                            </div>
+                                            <span className="text-xs font-bold">{d.kpi}% ({d.taskText})</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* SUMMARY DASHBOARD */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
             <p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Làm</p>
@@ -664,8 +761,11 @@ const AdminStatistics = ({ users, roles }) => {
           </thead>
           <tbody className="divide-y divide-slate-50">
             {stats.map(s => (
-               <tr key={s.id} className="hover:bg-slate-50">
-                  <td className="p-4 font-bold text-slate-700">{s.name} <div className="text-xs text-slate-400 font-normal">{s.role}</div></td>
+               <tr key={s.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleViewUserDetail(s)}>
+                  <td className="p-4 font-bold text-slate-700 group-hover:text-blue-600 transition-colors">
+                      {s.name} <ChevronRight size={14} className="inline ml-1 opacity-0 group-hover:opacity-100"/>
+                      <div className="text-xs text-slate-400 font-normal group-hover:text-blue-400">{s.role}</div>
+                  </td>
                   <td className="p-4 text-center">{s.workDays}</td>
                   <td className="p-4 text-center font-bold text-blue-600">{s.totalHours}h</td>
                   <td className="p-4 text-center font-bold text-emerald-600">{(s.rawHours * hourlyRate).toLocaleString()}đ</td>
