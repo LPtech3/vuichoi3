@@ -42,11 +42,7 @@ const getCurrentLocation = () => {
     if (!navigator.geolocation) {
       reject(new Error("Trình duyệt không hỗ trợ định vị."));
     } else {
-      const options = {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
-      };
+      const options = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
       navigator.geolocation.getCurrentPosition(
         (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
         (error) => {
@@ -267,6 +263,36 @@ export default function App() {
 }
 
 // ==========================================
+// LOGIN COMPONENT
+// ==========================================
+const ModernLogin = ({ loginForm, setLoginForm, handleLogin, notification, loading }) => (
+    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
+      <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-200">
+        <div className="text-center mb-8">
+           <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white mb-4 shadow-lg shadow-blue-500/30">
+              <ShieldCheck size={32}/>
+           </div>
+           <h1 className="text-2xl font-bold text-slate-800">Đăng Nhập Hệ Thống</h1>
+        </div>
+        <div className="space-y-4">
+           <div className="relative">
+              <User className="absolute left-4 top-3.5 text-slate-400" size={20}/>
+              <input type="text" placeholder="Tên đăng nhập" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})}/>
+           </div>
+           <div className="relative">
+              <Lock className="absolute left-4 top-3.5 text-slate-400" size={20}/>
+              <input type="password" placeholder="Mật khẩu" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleLogin()}/>
+           </div>
+           {notification.msg && <div className={`text-sm text-center font-medium ${notification.type==='error'?'text-red-500':'text-emerald-500'}`}>{notification.msg}</div>}
+           <button onClick={handleLogin} disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2">
+             {loading ? <Loader2 className="animate-spin" /> : "Đăng Nhập"}
+           </button>
+        </div>
+      </div>
+    </div>
+);
+
+// ==========================================
 // STAFF COMPONENTS
 // ==========================================
 const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) => {
@@ -301,7 +327,7 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
       if (!file) return;
 
       setAttLoading(true);
-      setNotify("Đang định vị và tải ảnh (Vui lòng chờ)...", "info");
+      setNotify("Đang định vị và tải ảnh...", "info");
 
       try {
          const location = await getCurrentLocation();
@@ -431,10 +457,8 @@ const StaffDashboard = ({ user, tasks, reportData, onUpdateLocal, setNotify }) =
             const item = reportData[task.id] || {};
             const isDone = item.done;
             const isSent = item.sent;
-
             const isDue = checkIsDue(task.time_label, isDone);
             const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, isDone);
-
             const cardClass = isSent
                 ? 'border-emerald-100 bg-emerald-50/20'
                 : (isDue && !isDone)
@@ -503,11 +527,11 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
   );
 };
 
-// --- FIX TOÀN DIỆN: TÍNH LƯƠNG DỰA TRÊN LOG_TIME (HỖ TRỢ DATA CŨ + CHECK CÙNG NGÀY) ---
-// --- ADMIN STATISTICS (NÂNG CẤP CHI TIẾT NHÂN SỰ) ---
-// --- ADMIN STATISTICS (ĐÃ SỬA LỖI NGÀY & HIỂN THỊ CHI TIẾT) ---
+// --- FIX & UPDATE: THỐNG KÊ THEO KHOẢNG NGÀY & KPI ---
 const AdminStatistics = ({ users, roles }) => {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const now = new Date();
+  const [fromDate, setFromDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
+  const [toDate, setToDate] = useState(now.toISOString().split('T')[0]);
   const [filterRole, setFilterRole] = useState('');
   const [stats, setStats] = useState([]);
   const [rawLogs, setRawLogs] = useState([]);
@@ -515,39 +539,34 @@ const AdminStatistics = ({ users, roles }) => {
   const [loading, setLoading] = useState(false);
   const [hourlyRate, setHourlyRate] = useState(25000);
 
-  // State xem chi tiết nhân sự
-  const [selectedUser, setSelectedUser] = useState(null);
-
   const calculateStats = async () => {
     setLoading(true);
-    setSelectedUser(null);
     try {
-      const startDate = `${month}-01T00:00:00`;
-      const nextMonth = new Date(month);
-      nextMonth.setMonth(nextMonth.getMonth() + 1);
-      const endDate = nextMonth.toISOString().slice(0, 10) + 'T00:00:00';
+      const start = `${fromDate}T00:00:00`;
+      const end = `${toDate}T23:59:59`;
 
-      // 1. Lấy Logs Chấm công
+      // 1. Logs Chấm công
       const { data: logsData } = await supabase.from('time_logs')
         .select('*')
-        .gte('log_time', startDate)
-        .lt('log_time', endDate)
+        .gte('log_time', start)
+        .lte('log_time', end)
         .order('log_time', { ascending: true });
       setRawLogs(logsData || []);
 
-      // 2. Lấy Logs Công việc (Checklists)
+      // 2. Logs Công việc (Lọc theo ngày)
       const { data: checkData } = await supabase.from('checklist_logs')
         .select('*')
-        .ilike('report_date', `${month}%`);
+        .gte('report_date', fromDate)
+        .lte('report_date', toDate);
       setRawChecklists(checkData || []);
 
-      // 3. Tính toán tổng hợp
+      // 3. Tính toán
       const processed = users.map(user => {
         if (filterRole && user.role !== filterRole) return null;
 
         const userLogs = (logsData || []).filter(l => l.user_id === user.id);
 
-        // Tính giờ làm (cộng dồn các cặp Check-in/Check-out cùng ngày)
+        // Tính giờ làm
         let totalMillis = 0;
         let validWorkDays = new Set();
         let currentCheckIn = null;
@@ -569,7 +588,7 @@ const AdminStatistics = ({ users, roles }) => {
         });
         const totalHours = (totalMillis / (1000 * 60 * 60));
 
-        // Tính % Công việc
+        // Tính % KPI (Tổng Task hoàn thành / Tổng Task được giao trong khoảng thời gian)
         const userChecklists = (checkData || []).filter(c => c.role === user.role);
         let totalTasksAssigned = 0;
         let totalTasksDone = 0;
@@ -582,10 +601,7 @@ const AdminStatistics = ({ users, roles }) => {
         const completionRate = totalTasksAssigned === 0 ? 0 : Math.round((totalTasksDone / totalTasksAssigned) * 100);
 
         return {
-           id: user.id,
-           name: user.name,
-           role: user.role,
-           username: user.username,
+           id: user.id, name: user.name, role: user.role, username: user.username,
            workDays: validWorkDays.size,
            totalHours: totalHours.toFixed(1),
            rawHours: totalHours,
@@ -594,666 +610,359 @@ const AdminStatistics = ({ users, roles }) => {
       }).filter(Boolean);
 
       setStats(processed);
-
-    } catch (error) {
-      console.error("Stats Error:", error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   };
-
-  useEffect(() => { calculateStats(); }, [month, filterRole]);
-
-  // --- SUB-COMPONENT: CHI TIẾT NHÂN VIÊN ---
-  const UserDetailView = ({ user }) => {
-     // XỬ LÝ NGÀY THÁNG CHÍNH XÁC (Tránh lỗi múi giờ)
-     const daysInMonth = [];
-     const [yStr, mStr] = month.split('-');
-     const y = parseInt(yStr);
-     const m = parseInt(mStr) - 1;
-     const daysCount = new Date(y, m + 1, 0).getDate();
-     const today = new Date();
-     today.setHours(0,0,0,0); // Reset giờ để so sánh ngày
-
-     for(let i = 1; i <= daysCount; i++) {
-        const d = new Date(y, m, i);
-        if (d > today) break; // Không hiện tương lai
-
-        // Tạo chuỗi YYYY-MM-DD thủ công để khớp với Database
-        const dayString = String(i).padStart(2, '0');
-        const monthString = String(m + 1).padStart(2, '0');
-        const dateStr = `${y}-${monthString}-${dayString}`;
-        daysInMonth.push(dateStr);
-     }
-
-     const userLogs = rawLogs.filter(l => l.user_id === user.id);
-
-     const dailyStats = daysInMonth.reverse().map(dateStr => {
-         // 1. Tính giờ ngày đó
-         const daysLogs = userLogs.filter(l => l.log_time.startsWith(dateStr));
-         daysLogs.sort((a,b) => new Date(a.log_time) - new Date(b.log_time));
-
-         let checkInTime = null;
-         let checkOutTime = null;
-         let dayMillis = 0;
-         let tempIn = null;
-
-         daysLogs.forEach(log => {
-             const t = new Date(log.log_time);
-             const timeStr = t.toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'});
-
-             if(log.action_type === 'check_in') {
-                 if(!checkInTime) checkInTime = timeStr;
-                 tempIn = t;
-             } else if (log.action_type === 'check_out' && tempIn) {
-                 checkOutTime = timeStr;
-                 dayMillis += (t - tempIn);
-                 tempIn = null;
-             }
-         });
-         const hours = (dayMillis / (1000 * 60 * 60)).toFixed(1);
-
-         // 2. Tính công việc (Lấy đúng user.role và dateStr)
-         const checklistLog = rawChecklists.find(c => c.report_date === dateStr && c.role === user.role);
-         const tasks = checklistLog ? Object.values(checklistLog.data || {}) : [];
-
-         const totalTask = tasks.length;
-         const doneTask = tasks.filter(t => t.sent).length;
-         // Đếm số task bị trễ (dựa vào hàm checkIsLateWithBuffer có sẵn hoặc check tay)
-         const lateTaskCount = tasks.filter(t => t.sent && checkIsLateWithBuffer(t.time_label || '', t.late_buffer || 0, true)).length;
-
-         // 3. Đánh giá tự động
-         let rating = "Chưa làm việc";
-         let ratingClass = "text-slate-400 font-normal";
-
-         if (totalTask > 0) {
-             const p = (doneTask / totalTask) * 100;
-             if (p >= 100) {
-                 if (lateTaskCount === 0) { rating = "Xuất sắc"; ratingClass = "text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded"; }
-                 else { rating = `Hoàn thành (Trễ ${lateTaskCount})`; ratingClass = "text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded"; }
-             } else if (p >= 50) {
-                 rating = "Khá"; ratingClass = "text-amber-600 font-bold";
-             } else {
-                 rating = "Kém"; ratingClass = "text-red-600 font-bold";
-             }
-         } else if (parseFloat(hours) > 0) {
-             rating = "Chỉ chấm công"; ratingClass = "text-slate-500 italic";
-         }
-
-         return {
-             date: dateStr,
-             dayName: new Date(dateStr).toLocaleDateString('vi-VN', {weekday: 'long'}),
-             checkIn: checkInTime || '--:--',
-             checkOut: checkOutTime || '--:--',
-             hours: hours,
-             taskStr: totalTask > 0 ? `${doneTask}/${totalTask}` : '-',
-             lateCount: lateTaskCount,
-             rating,
-             ratingClass,
-             hasWork: parseFloat(hours) > 0 || totalTask > 0
-         };
-     });
-
-     return (
-         <div className="animate-in fade-in slide-in-from-right-8 duration-300">
-             <div className="flex items-center gap-4 mb-6">
-                 <button onClick={() => setSelectedUser(null)} className="flex items-center gap-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg transition-all font-bold">
-                     <TrendingUp className="rotate-180" size={20}/> Quay lại
-                 </button>
-                 <div>
-                     <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">{user.name} <span className="text-sm font-normal text-slate-500 bg-slate-100 px-2 rounded-full border">{user.role}</span></h2>
-                     <p className="text-slate-500 text-sm">Chi tiết tháng {month}</p>
-                 </div>
-                 <div className="ml-auto hidden md:flex gap-3">
-                      <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm">
-                          <span className="text-xs text-slate-400 font-bold uppercase">Tổng giờ</span>
-                          <div className="text-xl font-bold text-blue-600">{user.totalHours}h</div>
-                      </div>
-                      <div className="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm">
-                          <span className="text-xs text-slate-400 font-bold uppercase">Lương dự kiến</span>
-                          <div className="text-xl font-bold text-emerald-600">{(user.rawHours * hourlyRate).toLocaleString()}đ</div>
-                      </div>
-                 </div>
-             </div>
-
-             <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                 <table className="w-full text-sm text-left">
-                     <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs border-b">
-                         <tr>
-                             <th className="p-4">Ngày</th>
-                             <th className="p-4 text-center">Vào / Ra</th>
-                             <th className="p-4 text-center">Giờ làm</th>
-                             <th className="p-4 text-center">Tiến độ việc</th>
-                             <th className="p-4">Đánh giá hiệu quả</th>
-                         </tr>
-                     </thead>
-                     <tbody className="divide-y divide-slate-50">
-                         {dailyStats.map((day, idx) => (
-                             <tr key={idx} className={`hover:bg-slate-50 transition-colors ${!day.hasWork ? 'opacity-60' : ''}`}>
-                                 <td className="p-4">
-                                     <div className="font-bold text-slate-700">{day.date.split('-').reverse().join('/')}</div>
-                                     <div className="text-xs text-slate-400 uppercase">{day.dayName}</div>
-                                 </td>
-                                 <td className="p-4 text-center font-mono text-slate-600 bg-slate-50/50">
-                                     {day.checkIn} - {day.checkOut}
-                                 </td>
-                                 <td className="p-4 text-center">
-                                     {parseFloat(day.hours) > 0 ? <span className="font-bold text-blue-600">{day.hours}h</span> : '-'}
-                                 </td>
-                                 <td className="p-4 text-center">
-                                     {day.taskStr !== '-' ? (
-                                         <div className="inline-flex flex-col items-center">
-                                             <span className="font-bold text-slate-700 text-base">{day.taskStr}</span>
-                                             {day.lateCount > 0 && <span className="text-[10px] font-bold text-red-500 bg-red-50 px-1 rounded">Trễ {day.lateCount}</span>}
-                                         </div>
-                                     ) : '-'}
-                                 </td>
-                                 <td className="p-4">
-                                     <span className={day.ratingClass}>{day.rating}</span>
-                                 </td>
-                             </tr>
-                         ))}
-                     </tbody>
-                 </table>
-                 {dailyStats.length === 0 && <div className="p-8 text-center text-slate-400">Chưa có dữ liệu nào trong tháng này</div>}
-             </div>
-         </div>
-     )
-  }
-
-  // --- MAIN VIEW ---
-  if (selectedUser) return <UserDetailView user={selectedUser} />;
-
-  return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center flex-wrap">
-          <div className="flex items-center gap-2">
-             <CalendarClock className="text-blue-600"/>
-             <span className="font-bold text-slate-700">Tháng:</span>
-             <input type="month" value={month} onChange={e => setMonth(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold text-slate-700 bg-slate-50 outline-none focus:ring-2 ring-blue-500"/>
-          </div>
-          <div className="flex items-center gap-2 w-full md:w-auto">
-             <Briefcase className="text-slate-400" size={18}/>
-             <select className="border rounded-lg px-3 py-2 text-sm w-full md:w-48 outline-none" value={filterRole} onChange={e => setFilterRole(e.target.value)}>
-                <option value="">-- Tất cả khu vực --</option>
-                {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-             </select>
-          </div>
-          <div className="flex items-center gap-2 ml-auto bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
-             <DollarSign className="text-emerald-600" size={18}/>
-             <span className="font-bold text-emerald-800 text-sm">Lương/giờ:</span>
-             <input type="number" value={hourlyRate} onChange={e => setHourlyRate(Number(e.target.value))} className="w-24 bg-white border border-emerald-200 rounded px-2 py-1 text-sm font-bold text-right outline-none focus:ring-2 ring-emerald-500"/>
-             <span className="text-xs text-emerald-600 font-bold">đ</span>
-          </div>
-          <button onClick={calculateStats} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-700 flex items-center gap-2 shadow-lg shadow-blue-500/30">
-             {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tính Toán
-          </button>
-       </div>
-
-       {/* CARD TỔNG QUAN */}
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-             <div className="flex justify-between items-start mb-2">
-                 <div><p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Toàn Team</p><h3 className="text-2xl font-bold text-slate-800">{stats.reduce((acc, curr) => acc + parseFloat(curr.totalHours), 0).toFixed(1)}h</h3></div>
-                 <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Clock size={20}/></div>
-             </div>
-          </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-             <div className="flex justify-between items-start mb-2">
-                 <div><p className="text-slate-400 text-xs font-bold uppercase">Tổng Chi Lương (Ước tính)</p><h3 className="text-2xl font-bold text-emerald-600">{(stats.reduce((acc, curr) => acc + (curr.rawHours * hourlyRate), 0)).toLocaleString('vi-VN')} đ</h3></div>
-                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><DollarSign size={20}/></div>
-             </div>
-          </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-             <div className="flex justify-between items-start mb-2">
-                 <div><p className="text-slate-400 text-xs font-bold uppercase">Hiệu Suất TB</p><h3 className="text-2xl font-bold text-slate-800">{stats.length > 0 ? Math.round(stats.reduce((acc, curr) => acc + curr.completionRate, 0) / stats.length) : 0}%</h3></div>
-                 <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><TrendingUp size={20}/></div>
-             </div>
-          </div>
-       </div>
-
-       <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-          <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center"><h3 className="font-bold text-slate-700">Danh Sách Nhân Viên (Nhấn vào để xem chi tiết)</h3></div>
-          <div className="overflow-x-auto">
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
-                   <tr>
-                      <th className="p-4">Nhân Viên</th>
-                      <th className="p-4">Khu Vực</th>
-                      <th className="p-4 text-center">Số Ngày</th>
-                      <th className="p-4 text-center">Tổng Giờ</th>
-                      <th className="p-4 text-right">Lương Tạm Tính</th>
-                      <th className="p-4">Mức Độ Hoàn Thành</th>
-                   </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                   {stats.length === 0 ? (
-                      <tr><td colSpan="6" className="p-8 text-center text-slate-400">Chưa có dữ liệu tính toán</td></tr>
-                   ) : (
-                      stats.map(s => (
-                         <tr key={s.id} onClick={() => setSelectedUser(s)} className="hover:bg-blue-50 cursor-pointer transition-colors group">
-                            <td className="p-4 font-bold text-slate-700 group-hover:text-blue-600">{s.name}</td>
-                            <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs text-slate-500">{s.role}</span></td>
-                            <td className="p-4 text-center font-bold">{s.workDays}</td>
-                            <td className="p-4 text-center text-blue-600 font-bold">{s.totalHours}</td>
-                            <td className="p-4 text-right font-bold text-emerald-600">{Math.round(s.rawHours * hourlyRate).toLocaleString('vi-VN')} đ</td>
-                            <td className="p-4">
-                               <div className="flex items-center gap-2">
-                                  <div className="flex-1 h-2 bg-slate-100 rounded-full max-w-[100px]"><div className={`h-2 rounded-full ${s.completionRate >= 80 ? 'bg-emerald-500' : s.completionRate >= 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{width: `${s.completionRate}%`}}></div></div>
-                                  <span className="text-xs font-bold">{s.completionRate}%</span>
-                               </div>
-                            </td>
-                         </tr>
-                      ))
-                   )}
-                </tbody>
-             </table>
-          </div>
-       </div>
-    </div>
-  )
-};
-
-const AdminTimesheet = ({ users }) => {
-    const [viewDate, setViewDate] = useState(getTodayISO());
-    const [logs, setLogs] = useState([]);
-    const [loading, setLoading] = useState(false);
-
-    useEffect(() => {
-        const fetchLogs = async () => {
-            setLoading(true);
-            try {
-                const { data, error } = await supabase
-                    .from('time_logs')
-                    .select('*, app_users(name, role)')
-                    .eq('report_date', viewDate)
-                    .order('log_time', { ascending: false });
-
-                if (error) throw error;
-                setLogs(data || []);
-            } catch (err) {
-                console.error("Lỗi tải timesheet:", err);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchLogs();
-    }, [viewDate]);
-
-    return (
-        <div className="space-y-4">
-             <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
-                <span className="text-slate-500 font-bold text-sm"><Filter size={18} className="inline mr-1"/> Xem ngày:</span>
-                <input
-                    type="date"
-                    value={viewDate}
-                    onChange={(e) => setViewDate(e.target.value)}
-                    className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-800 outline-none focus:ring-2 ring-blue-500"
-                />
-                {loading && <span className="text-blue-600 text-xs font-bold flex items-center"><Loader2 className="animate-spin mr-1" size={14}/> Đang tải...</span>}
-             </div>
-
-             <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                 <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                     <h3 className="font-bold text-slate-700">Nhật ký Chấm Công ({viewDate})</h3>
-                 </div>
-                 <div className="overflow-x-auto">
-                 <table className="w-full text-sm text-left">
-                    <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
-                        <tr>
-                            <th className="p-4">Thời gian</th>
-                            <th className="p-4">Nhân viên</th>
-                            <th className="p-4">Hành động</th>
-                            <th className="p-4">Ảnh Xác Thực</th>
-                            <th className="p-4">Định Vị (Map)</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                        {logs.length === 0 ? (
-                            <tr><td colSpan="5" className="p-6 text-center text-slate-400">Không có dữ liệu chấm công ngày này</td></tr>
-                        ) : (
-                            logs.map((log) => (
-                                <tr key={log.id} className="hover:bg-slate-50">
-                                    <td className="p-4 font-mono text-slate-500">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</td>
-                                    <td className="p-4">
-                                        <p className="font-bold text-slate-700">{log.app_users?.name || 'Unknown'}</p>
-                                        <p className="text-xs text-slate-400 uppercase">{log.app_users?.role}</p>
-                                    </td>
-                                    <td className="p-4">
-                                        <span className={`px-2 py-1 rounded text-xs font-bold ${log.action_type==='check_in'?'bg-emerald-100 text-emerald-700':'bg-rose-100 text-rose-700'}`}>
-                                            {log.action_type === 'check_in' ? 'VÀO CA' : 'RA CA'}
-                                        </span>
-                                    </td>
-                                    <td className="p-4">
-                                        {log.image_url ? (
-                                            <a href={log.image_url} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:scale-105 transition-transform">
-                                                <img src={log.image_url} alt="checkin" className="w-full h-full object-cover"/>
-                                            </a>
-                                        ) : <span className="text-xs text-slate-300">Không có ảnh</span>}
-                                    </td>
-                                    <td className="p-4">
-                                        {log.lat && log.lng ? (
-                                            <a href={`http://googleusercontent.com/maps.google.com/2{log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 hover:underline">
-                                                <MapPin size={14}/> Xem bản đồ
-                                            </a>
-                                        ) : <span className="text-xs text-slate-300">Không có GPS</span>}
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                 </table>
-                 </div>
-            </div>
-        </div>
-    )
-}
-
-const AdminReports = ({ initialReports, allTasks, roles }) => {
-   const [viewDate, setViewDate] = useState(getTodayISO());
-   const [reports, setReports] = useState(initialReports);
-   const [loading, setLoading] = useState(false);
-
-   useEffect(() => {
-       if (viewDate === getTodayISO()) {
-           setReports(initialReports);
-       }
-   }, [initialReports]);
-
-   useEffect(() => {
-       const fetchReportsByDate = async () => {
-           setLoading(true);
-           try {
-               const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', viewDate);
-               const reportMap = {};
-               if(repData) repData.forEach(r => reportMap[r.role] = r.data);
-               setReports(reportMap);
-           } catch (error) {
-               console.error(error);
-           } finally {
-               setLoading(false);
-           }
-       };
-       fetchReportsByDate();
-   }, [viewDate]);
-
-   const sortedTasks = sortTasksByTime([...allTasks]);
-   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
-
-   return (
-     <div className="space-y-4">
-         <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-3">
-                <span className="text-slate-500 font-bold text-sm"><Calendar size={18} className="inline mr-2"/>Xem tiến độ ngày:</span>
-                <input
-                    type="date"
-                    value={viewDate}
-                    onChange={(e) => setViewDate(e.target.value)}
-                    className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-800 outline-none focus:ring-2 ring-blue-500"
-                />
-            </div>
-            {loading && <div className="text-blue-600 flex items-center gap-2 text-sm font-bold"><Loader2 className="animate-spin" size={16}/> Đang tải...</div>}
-         </div>
-
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-           {roleKeys.map(roleKey => {
-              const roleObj = roles.find(r => r.code === roleKey);
-              const roleName = roleObj ? roleObj.name : roleKey;
-              const roleTasks = sortedTasks.filter(t => t.role === roleKey);
-              if (roleTasks.length === 0 && !roleObj) return null;
-              const roleReport = reports[roleKey] || {};
-              const sentCount = Object.values(roleReport).filter(i => i.sent).length;
-              const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
-
-              return (
-                 <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div className="p-4 bg-slate-50 border-b border-slate-100">
-                       <div className="flex justify-between items-center mb-2">
-                           <h3 className="font-bold text-slate-800">{roleName}</h3>
-                           <span className={`text-xs font-bold border px-2 py-1 rounded-full ${percent === 100 ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white'}`}>
-                               {sentCount}/{roleTasks.length}
-                           </span>
-                       </div>
-                       <div className="w-full bg-slate-200 rounded-full h-1.5">
-                           <div className={`h-1.5 rounded-full ${percent === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
-                       </div>
-                    </div>
-                    <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
-                       {roleTasks.length === 0 ? <p className="p-4 text-center text-slate-400 text-sm">Chưa có công việc nào</p> :
-                       roleTasks.map(task => {
-                          const item = roleReport[task.id];
-                          const isLate = checkIsLateWithBuffer(task.time_label, task.late_buffer, item?.sent);
-                          if(!item || !item.sent) return (
-                              <div key={task.id} className="p-3 text-sm flex justify-between gap-3 text-slate-400 bg-slate-50/50">
-                                  <span>{task.title} <span className="text-xs">({task.time_label})</span></span>
-                                  {(viewDate === getTodayISO() && isLate) && <span className="text-red-500 text-xs font-bold flex items-center gap-1"><AlertCircle size={12}/> Trễ</span>}
-                              </div>
-                          );
-                          return (
-                              <div key={task.id} className="p-3 text-sm flex items-start justify-between gap-3 hover:bg-slate-50 bg-white">
-                                  <div>
-                                      <p className="font-medium text-slate-700">{task.title}</p>
-                                      <p className="text-xs text-slate-400">{item.time}</p>
-                                  </div>
-                                  <div className="flex flex-col items-end gap-1">
-                                      {item.val && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-xs font-mono">{item.val}</span>}
-                                      {item.imageUrl && (<a href={item.imageUrl} target="_blank" rel="noreferrer" className="text-indigo-600 text-xs flex items-center gap-1 hover:underline"><ImageIcon size={12}/> Ảnh</a>)}
-                                  </div>
-                              </div>
-                          )
-                       })}
-                    </div>
-                 </div>
-              )
-           })}
-         </div>
-     </div>
-   )
-}
-
-const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
-  const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
-  const formRef = useRef(null);
-
-  useEffect(() => {
-      if(roles.length > 0 && !editing.role && !editing.id) {
-          setEditing(prev => ({...prev, role: roles[0].code}));
-      }
-  }, [roles]);
-
-  const resetForm = () => setEditing({ id: null, role: roles[0]?.code || '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
-
-  const handleSaveTask = async () => {
-     if(!editing.title) return setNotify("Chưa nhập tên việc", "error");
-     const payload = {
-         role: editing.role, title: editing.title, time_label: editing.time_label,
-         late_buffer: editing.late_buffer, require_input: editing.require_input,
-         require_image: editing.require_image
-     };
-
-     if (editing.id) {
-         const { error } = await supabase.from('task_definitions').update(payload).eq('id', editing.id);
-         if(error) setNotify("Lỗi cập nhật", "error"); else { setNotify("Đã cập nhật"); onRefresh(); resetForm(); }
-     } else {
-         const { error } = await supabase.from('task_definitions').insert(payload);
-         if(error) setNotify("Lỗi tạo việc", "error"); else { setNotify("Đã thêm công việc"); onRefresh(); resetForm(); }
-     }
-  };
-
-  const handleEdit = (task) => {
-      setEditing({ ...task });
-      if(formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  };
-
-  const handleDeleteTask = async (id) => { if(!window.confirm("Xóa việc này?")) return; const { error } = await supabase.from('task_definitions').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-
-  return (
-     <div className="space-y-6">
-        <div ref={formRef} className={`p-4 rounded-xl border grid grid-cols-2 md:grid-cols-6 gap-3 transition-all ${editing.id ? 'bg-orange-50 border-orange-200 shadow-lg ring-2 ring-orange-100' : 'bg-indigo-50 border-indigo-100'}`}>
-           {editing.id && <div className="col-span-2 md:col-span-6 text-orange-700 font-bold flex items-center gap-2 mb-2"><Edit3 size={16}/> Đang chỉnh sửa: {editing.title}</div>}
-
-           <div className="col-span-2 md:col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Khu vực</label><select className="w-full p-2 rounded border text-sm bg-white" value={editing.role} onChange={e => setEditing({...editing, role: e.target.value})}>{roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select></div>
-           <div className="col-span-2 md:col-span-2"><label className="text-xs font-bold text-indigo-800 block mb-1">Tên công việc</label><input className="w-full p-2 rounded border text-sm" placeholder="VD: Dọn hồ cá" value={editing.title} onChange={e => setEditing({...editing, title: e.target.value})}/></div>
-           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Giờ (VD: 15:30)</label><input className="w-full p-2 rounded border text-sm" placeholder="15:30" value={editing.time_label} onChange={e => setEditing({...editing, time_label: e.target.value})}/></div>
-           <div className="col-span-1"><label className="text-xs font-bold text-indigo-800 block mb-1">Cho trễ (phút)</label><input type="number" className="w-full p-2 rounded border text-sm" placeholder="15" value={editing.late_buffer} onChange={e => setEditing({...editing, late_buffer: parseInt(e.target.value)||0})}/></div>
-           <div className="col-span-2 md:col-span-1 flex flex-col justify-center gap-2"><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_input} onChange={e => setEditing({...editing, require_input: e.target.checked})} /> Nhập số liệu?</label><label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editing.require_image} onChange={e => setEditing({...editing, require_image: e.target.checked})} /> Chụp ảnh?</label></div>
-           <div className="col-span-2 md:col-span-6 flex items-end gap-2 pt-2 border-t border-black/5 mt-2">
-               {editing.id && <button onClick={resetForm} className="flex items-center gap-2 bg-slate-200 text-slate-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-slate-300"><XCircle size={16}/> Hủy Bỏ</button>}
-               <button onClick={handleSaveTask} className={`flex-1 flex items-center justify-center gap-2 text-white px-4 py-2 rounded-lg font-bold shadow-lg text-sm ${editing.id ? 'bg-orange-600 hover:bg-orange-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>{editing.id ? <><Save size={16}/> Cập nhật Thay Đổi</> : <><Plus size={16}/> Thêm Mới</>}</button>
-           </div>
-        </div>
-
-        <div className="space-y-4">
-            {roles.map(role => {
-                const tasks = sortTasksByTime(allTasks.filter(t => t.role === role.code));
-                if(tasks.length === 0) return null;
-                return (
-                    <div key={role.code} className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                        <div className="bg-slate-50 p-3 border-b border-slate-100 font-bold text-slate-700 flex justify-between">{role.name} <span className="text-xs font-normal bg-white border px-2 rounded flex items-center">{role.code}</span></div>
-                        {tasks.map((t) => (
-                            <div key={t.id} className={`p-3 border-b border-slate-50 last:border-0 flex items-center justify-between hover:bg-slate-50 ${editing.id === t.id ? 'bg-orange-50' : ''}`}>
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 text-center text-xs font-bold text-blue-600 bg-blue-50 py-1 rounded">
-                                        {t.time_label || '00:00'}
-                                    </div>
-                                    <div>
-                                        <p className="font-bold text-sm text-slate-700">{t.title}</p>
-                                        <p className="text-xs text-slate-400">
-                                            Cho phép trễ {t.late_buffer}p
-                                            {t.require_input && ' • 🔢 Nhập số'}
-                                            {t.require_image && ' • 📸 Chụp ảnh'}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex gap-1">
-                                    <button onClick={() => handleEdit(t)} className="text-blue-500 hover:bg-blue-50 p-2 rounded-lg transition-all"><Edit3 size={18}/></button>
-                                    <button onClick={() => handleDeleteTask(t.id)} className="text-slate-400 hover:bg-red-50 hover:text-red-500 p-2 rounded-lg transition-all"><Trash2 size={18}/></button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )
-            })}
-        </div>
-     </div>
-  )
-}
-
-const AdminRoleManager = ({ roles, allTasks, onRefresh, setNotify }) => {
-    const [newRole, setNewRole] = useState({ code: '', name: '' });
-    const [cloneData, setCloneData] = useState({ from: '', toCode: '', toName: '' });
-
-    const handleAddRole = async () => { if(!newRole.code || !newRole.name) return setNotify("Vui lòng nhập", "error"); const cleanCode = newRole.code.toLowerCase().replace(/\s/g, '_'); const { error } = await supabase.from('job_roles').insert({ code: cleanCode, name: newRole.name }); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); setNewRole({ code: '', name: '' }); onRefresh(); } };
-
-    const handleDeleteRole = async (code) => { if(code === 'admin') return; if(!window.confirm(`Xóa ${code}?`)) return; const { error } = await supabase.from('job_roles').delete().eq('code', code); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
-
-    const handleCloneRole = async () => {
-        if (!cloneData.from || !cloneData.toCode || !cloneData.toName) return setNotify("Thiếu thông tin nhân bản", "error");
-        const cleanToCode = cloneData.toCode.toLowerCase().replace(/\s/g, '_');
-        const { error: rErr } = await supabase.from('job_roles').insert({ code: cleanToCode, name: cloneData.toName });
-        if (rErr) return setNotify("Lỗi tạo Role: " + rErr.message, "error");
-        const sourceTasks = allTasks.filter(t => t.role === cloneData.from);
-        if (sourceTasks.length === 0) return setNotify("Khu vực nguồn không có việc nào", "info");
-        const newTasks = sourceTasks.map(t => ({
-            role: cleanToCode,
-            title: t.title,
-            time_label: t.time_label,
-            late_buffer: t.late_buffer,
-            require_input: t.require_input,
-            require_image: t.require_image
-        }));
-        const { error: tErr } = await supabase.from('task_definitions').insert(newTasks);
-        if (tErr) setNotify("Lỗi copy việc: " + tErr.message, "error");
-        else { setNotify("Đã nhân bản thành công!"); onRefresh(); setCloneData({ from: '', toCode: '', toName: '' }); }
-    };
-
-    return (
-        <div className="space-y-8">
-            <div>
-                <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Thêm Khu Vực Mới</h3>
-                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex gap-3">
-                    <input className="p-2 rounded border border-amber-200 text-sm flex-1" placeholder="Mã (vd: be_boi)" value={newRole.code} onChange={e => setNewRole({...newRole, code: e.target.value})}/>
-                    <input className="p-2 rounded border border-amber-200 text-sm flex-[2]" placeholder="Tên (vd: Bể Bơi)" value={newRole.name} onChange={e => setNewRole({...newRole, name: e.target.value})}/>
-                    <button onClick={handleAddRole} className="bg-amber-600 text-white px-4 rounded font-bold hover:bg-amber-700 text-sm">Thêm</button>
-                </div>
-            </div>
-
-            <div>
-                 <h3 className="text-sm font-bold mb-2 uppercase text-slate-500">Copy Cấu Hình (Nhân Bản)</h3>
-                 <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <select className="p-2 rounded border border-blue-200 text-sm" value={cloneData.from} onChange={e => setCloneData({...cloneData, from: e.target.value})}>
-                        <option value="">-- Sao chép từ --</option>
-                        {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-                    </select>
-                    <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Mã Mới (vd: be_boi_2)" value={cloneData.toCode} onChange={e => setCloneData({...cloneData, toCode: e.target.value})}/>
-                    <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Tên Mới (vd: Bể Bơi 2)" value={cloneData.toName} onChange={e => setCloneData({...cloneData, toName: e.target.value})}/>
-                    <button onClick={handleCloneRole} className="bg-blue-600 text-white px-4 rounded font-bold hover:bg-blue-700 text-sm flex items-center justify-center gap-2"><Copy size={16}/> Nhân bản</button>
-                 </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm text-left">
-                    <tbody className="divide-y divide-slate-100">
-                        {roles.map(r => (
-                            <tr key={r.code} className="hover:bg-slate-50">
-                                <td className="p-4 font-mono text-slate-500">{r.code}</td>
-                                <td className="p-4 font-bold text-slate-700">{r.name}</td>
-                                <td className="p-4 text-right"><button onClick={() => handleDeleteRole(r.code)} className="text-red-400 p-2"><Trash2 size={16}/></button></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    )
-}
-
-const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
-  const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: '' });
-  useEffect(() => { if(roles.length > 0 && !newUser.role) setNewUser(prev => ({...prev, role: roles[0].code})); }, [roles]);
-
-  const handleAddUser = async () => { if(!newUser.username || !newUser.password) return setNotify("Thiếu thông tin", "error"); const roleToSave = newUser.role || 'staff'; const { error } = await supabase.from('app_users').insert({...newUser, role: roleToSave}); if(error) setNotify("Lỗi: " + error.message, "error"); else { setNotify("Đã thêm"); onRefresh(); } };
-  const handleDeleteUser = async (id) => { if(!window.confirm("Xóa user?")) return; const { error } = await supabase.from('app_users').delete().eq('id', id); if(!error) { setNotify("Đã xóa"); onRefresh(); } };
 
   return (
     <div className="space-y-6">
-        <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col md:flex-row gap-3">
-            <input className="p-2 rounded border border-blue-200 text-sm" placeholder="User" value={newUser.username} onChange={e => setNewUser({...newUser, username: e.target.value})}/>
-            <input className="p-2 rounded border border-blue-200 text-sm" placeholder="Pass" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})}/>
-            <input className="p-2 rounded border border-blue-200 text-sm flex-1" placeholder="Họ Tên" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})}/>
-            <select className="p-2 rounded border border-blue-200 text-sm" value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}>
-                <option value="admin">Quản lý (Admin)</option>
-                {roles.map(r => ( <option key={r.code} value={r.code}>{r.name}</option> ))}</select>
-            <button onClick={handleAddUser} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 text-sm">Thêm</button>
-        </div>
-        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-            <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
-                    <tr>
-                        <th className="p-4">Họ Tên</th>
-                        <th className="p-4">Username</th>
-                        <th className="p-4 text-red-400">Password</th>
-                        <th className="p-4">Vai trò</th>
-                        <th className="p-4 text-right">Xóa</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                    {users.map(u => (
-                        <tr key={u.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-bold text-slate-700">{u.name}</td>
-                            <td className="p-4 text-slate-500">{u.username}</td>
-                            <td className="p-4 text-red-500 font-mono">{u.password}</td>
-                            <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs">{u.role}</span></td>
-                            <td className="p-4 text-right"><button onClick={() => handleDeleteUser(u.id)} className="text-red-500 p-2"><Trash2 size={16}/></button></td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    </div>
-  )
-}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+         <div>
+            <label className="text-xs font-bold text-slate-500 block mb-1">Từ ngày</label>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold"/>
+         </div>
+         <div>
+            <label className="text-xs font-bold text-slate-500 block mb-1">Đến ngày</label>
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold"/>
+         </div>
+         <div className="flex-1">
+            <label className="text-xs font-bold text-slate-500 block mb-1">Lọc Khu Vực</label>
+            <select className="w-full border rounded-lg px-3 py-2 text-sm" value={filterRole} onChange={e => setFilterRole(e.target.value)}>
+               <option value="">Tất cả</option>
+               {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
+            </select>
+         </div>
+         <button onClick={calculateStats} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-500/30">
+            {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tính Toán
+         </button>
+      </div>
 
-const ModernLogin = ({ loginForm, setLoginForm, handleLogin, loading, notification }) => (
-  <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4"><div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 border border-slate-100"><div className="text-center mb-8"><div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white mb-4 shadow-lg shadow-blue-500/30"><ShieldCheck size={32}/></div><h1 className="text-2xl font-bold text-slate-800">Đăng Nhập Hệ Thống</h1></div><div className="space-y-4"><div className="relative"><User className="absolute left-4 top-3.5 text-slate-400" size={20}/><input type="text" placeholder="Tên đăng nhập" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})}/></div><div className="relative"><Lock className="absolute left-4 top-3.5 text-slate-400" size={20}/><input type="password" placeholder="Mật khẩu" className="w-full pl-12 pr-4 py-3 bg-slate-50 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} onKeyDown={e => e.key === 'Enter' && handleLogin()}/></div>{notification.msg && <div className="text-red-500 text-sm text-center font-medium bg-red-50 p-2 rounded">{notification.msg}</div>}<button onClick={handleLogin} disabled={loading} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 flex justify-center">{loading ? <Loader2 className="animate-spin"/> : 'Vào ca làm việc'}</button></div></div></div>
-);
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <p className="text-slate-400 text-xs font-bold uppercase">Tổng Giờ Làm</p>
+            <h3 className="text-2xl font-bold text-slate-800">{stats.reduce((acc, c) => acc + parseFloat(c.totalHours), 0).toFixed(1)}h</h3>
+         </div>
+         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+             <p className="text-slate-400 text-xs font-bold uppercase">Ước Tính Lương (Toàn team)</p>
+             <h3 className="text-2xl font-bold text-emerald-600">{(stats.reduce((acc, c) => acc + (c.rawHours * hourlyRate), 0)).toLocaleString()} đ</h3>
+         </div>
+         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+             <p className="text-slate-400 text-xs font-bold uppercase">Hiệu Suất KPI (Trung bình)</p>
+             <h3 className="text-2xl font-bold text-blue-600">{stats.length > 0 ? Math.round(stats.reduce((acc, c) => acc + c.completionRate, 0) / stats.length) : 0}%</h3>
+         </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-slate-50 text-slate-600 font-bold uppercase text-xs border-b">
+            <tr>
+              <th className="p-4">Nhân viên</th>
+              <th className="p-4 text-center">Ngày làm</th>
+              <th className="p-4 text-center">Tổng giờ</th>
+              <th className="p-4 text-center">Lương ({hourlyRate/1000}k/h)</th>
+              <th className="p-4">KPI Hoàn thành</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {stats.map(s => (
+               <tr key={s.id} className="hover:bg-slate-50">
+                  <td className="p-4 font-bold text-slate-700">{s.name} <div className="text-xs text-slate-400 font-normal">{s.role}</div></td>
+                  <td className="p-4 text-center">{s.workDays}</td>
+                  <td className="p-4 text-center font-bold text-blue-600">{s.totalHours}h</td>
+                  <td className="p-4 text-center font-bold text-emerald-600">{(s.rawHours * hourlyRate).toLocaleString()}đ</td>
+                  <td className="p-4">
+                     <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-slate-100 rounded-full h-2">
+                           <div className="bg-blue-600 h-2 rounded-full" style={{width: `${s.completionRate}%`}}></div>
+                        </div>
+                        <span className="font-bold text-xs">{s.completionRate}%</span>
+                     </div>
+                  </td>
+               </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// --- FIX: LINK MAP & HIỂN THỊ ---
+const AdminTimesheet = ({ users }) => {
+  const [viewDate, setViewDate] = useState(getTodayISO());
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchLogs = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+           .from('time_logs')
+           .select('*, app_users(name, role)')
+           .eq('report_date', viewDate)
+           .order('log_time', { ascending: false });
+        if (error) throw error;
+        setLogs(data || []);
+      } catch (err) { console.error(err); } finally { setLoading(false); }
+    };
+    fetchLogs();
+  }, [viewDate]);
+
+  return (
+    <div className="space-y-4">
+       <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3">
+          <span className="text-slate-500 font-bold text-sm">Xem ngày:</span>
+          <input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm font-bold"/>
+          {loading && <span className="text-blue-600 text-xs font-bold animate-pulse">Đang tải...</span>}
+       </div>
+       <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+         <table className="w-full text-sm text-left">
+           <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+             <tr>
+               <th className="p-4">Thời gian</th>
+               <th className="p-4">Nhân viên</th>
+               <th className="p-4">Hành động</th>
+               <th className="p-4">Ảnh</th>
+               <th className="p-4">Vị trí (Map)</th>
+             </tr>
+           </thead>
+           <tbody className="divide-y divide-slate-50">
+             {logs.map(log => (
+               <tr key={log.id} className="hover:bg-slate-50">
+                 <td className="p-4 font-mono text-slate-600">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</td>
+                 <td className="p-4 font-bold">{log.app_users?.name}</td>
+                 <td className="p-4">
+                    <span className={`px-2 py-1 rounded text-xs font-bold ${log.action_type==='check_in'?'bg-blue-100 text-blue-600':'bg-rose-100 text-rose-600'}`}>
+                       {log.action_type==='check_in' ? 'VÀO CA' : 'TAN CA'}
+                    </span>
+                 </td>
+                 <td className="p-4">
+                    {log.image_url ? <a href={log.image_url} target="_blank" className="text-blue-600 underline text-xs">Xem ảnh</a> : '-'}
+                 </td>
+                 <td className="p-4">
+                    {log.lat ? (
+                       <a href={`https://www.google.com/maps/search/?api=1&query=${log.lat},${log.lng}`} target="_blank" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
+                          <MapPin size={14}/> Xem Map
+                       </a>
+                    ) : <span className="text-slate-400 text-xs">Không có GPS</span>}
+                 </td>
+               </tr>
+             ))}
+           </tbody>
+         </table>
+       </div>
+    </div>
+  );
+};
+
+const AdminReports = ({ initialReports, allTasks, roles }) => {
+   const sortedTasks = sortTasksByTime([...allTasks]);
+   const roleKeys = roles.length > 0 ? roles.map(r => r.code) : [...new Set(sortedTasks.map(t => t.role))];
+   return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {roleKeys.map(roleKey => {
+           const roleObj = roles.find(r => r.code === roleKey);
+           const roleName = roleObj ? roleObj.name : roleKey;
+           const roleTasks = sortedTasks.filter(t => t.role === roleKey);
+           if (roleTasks.length === 0) return null;
+           const roleReport = initialReports[roleKey] || {};
+           const sentCount = Object.values(roleReport).filter(i => i.sent).length;
+           const percent = roleTasks.length > 0 ? Math.round((sentCount/roleTasks.length)*100) : 0;
+           return (
+              <div key={roleKey} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                 <div className="p-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+                    <h3 className="font-bold text-slate-700">{roleName}</h3>
+                    <span className={`text-xs font-bold px-2 py-1 rounded ${percent===100?'bg-emerald-100 text-emerald-600':'bg-blue-100 text-blue-600'}`}>{percent}%</span>
+                 </div>
+                 <div className="p-4 space-y-3">
+                    {roleTasks.map(t => {
+                       const item = roleReport[t.id] || {};
+                       return (
+                          <div key={t.id} className="flex items-center justify-between text-sm">
+                             <span className={item.sent ? 'text-slate-400 line-through' : 'text-slate-700'}>{t.title}</span>
+                             {item.sent ? <CheckCircle2 size={16} className="text-emerald-500"/> : <span className="text-xs text-slate-400">Chưa làm</span>}
+                          </div>
+                       )
+                    })}
+                 </div>
+              </div>
+           )
+        })}
+      </div>
+   )
+};
+
+const AdminTaskManager = ({ allTasks, roles, onRefresh, setNotify }) => {
+  const [editing, setEditing] = useState({ id: null, role: '', title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
+  useEffect(() => { if(roles.length > 0 && !editing.role && !editing.id) setEditing(prev => ({...prev, role: roles[0].code})); }, [roles]);
+
+  const handleSave = async () => {
+     if(!editing.title) return setNotify("Chưa nhập tên việc", "error");
+     const payload = { role: editing.role, title: editing.title, time_label: editing.time_label, late_buffer: editing.late_buffer, require_input: editing.require_input, require_image: editing.require_image };
+     if (editing.id) await supabase.from('task_definitions').update(payload).eq('id', editing.id);
+     else await supabase.from('task_definitions').insert(payload);
+     setNotify(editing.id ? "Đã cập nhật" : "Đã thêm việc");
+     onRefresh();
+     setEditing({ id: null, role: editing.role, title: '', time_label: '', late_buffer: 15, require_input: false, require_image: false });
+  };
+  const handleDelete = async (id) => { if(confirm("Xóa việc này?")) { await supabase.from('task_definitions').delete().eq('id', id); onRefresh(); } };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-4 rounded-xl border border-slate-200 grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+         <div className="col-span-2 md:col-span-1">
+             <label className="text-xs font-bold text-slate-400">Khu vực</label>
+             <select className="w-full border rounded p-2 text-sm" value={editing.role} onChange={e => setEditing({...editing, role: e.target.value})}>{roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}</select>
+         </div>
+         <div className="col-span-2 md:col-span-2">
+             <label className="text-xs font-bold text-slate-400">Tên công việc</label>
+             <input className="w-full border rounded p-2 text-sm" value={editing.title} onChange={e => setEditing({...editing, title: e.target.value})} placeholder="Vd: Lau bàn..."/>
+         </div>
+         <div>
+             <label className="text-xs font-bold text-slate-400">Giờ (HH:MM)</label>
+             <input className="w-full border rounded p-2 text-sm" value={editing.time_label} onChange={e => setEditing({...editing, time_label: e.target.value})} placeholder="08:00"/>
+         </div>
+         <div className="flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={editing.require_input} onChange={e => setEditing({...editing, require_input: e.target.checked})}/> Nhập số liệu</label>
+            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={editing.require_image} onChange={e => setEditing({...editing, require_image: e.target.checked})}/> Bắt buộc ảnh</label>
+         </div>
+         <button onClick={handleSave} className="bg-blue-600 text-white p-2 rounded font-bold hover:bg-blue-700">{editing.id ? 'Lưu Sửa' : 'Thêm Mới'}</button>
+      </div>
+      <div className="grid gap-4">
+         {roles.map(role => {
+            const tasks = sortTasksByTime(allTasks.filter(t => t.role === role.code));
+            if (tasks.length === 0) return null;
+            return (
+               <div key={role.code} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-50 p-3 font-bold text-slate-700">{role.name}</div>
+                  {tasks.map(t => (
+                     <div key={t.id} className="p-3 border-t border-slate-100 flex justify-between items-center hover:bg-slate-50">
+                        <span className="text-sm font-medium">{t.time_label} - {t.title}</span>
+                        <div className="flex gap-2">
+                           <button onClick={() => setEditing(t)} className="text-blue-600 p-1"><Edit3 size={16}/></button>
+                           <button onClick={() => handleDelete(t.id)} className="text-red-600 p-1"><Trash2 size={16}/></button>
+                        </div>
+                     </div>
+                  ))}
+               </div>
+            )
+         })}
+      </div>
+    </div>
+  );
+};
+
+const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
+   const [newRole, setNewRole] = useState({ code: '', name: '' });
+   const handleAdd = async () => {
+      if(!newRole.code || !newRole.name) return setNotify("Nhập đủ mã và tên", "error");
+      const { error } = await supabase.from('job_roles').insert(newRole);
+      if(error) setNotify("Lỗi: " + error.message, "error");
+      else { setNotify("Đã thêm khu vực"); onRefresh(); setNewRole({ code: '', name: '' }); }
+   };
+   return (
+      <div className="bg-white p-4 rounded-xl border border-slate-200">
+         <h3 className="font-bold text-slate-700 mb-4">Thêm Khu Vực Mới</h3>
+         <div className="flex gap-3 mb-6">
+            <input className="border rounded p-2 flex-1" placeholder="Mã (vd: bep_chinh)" value={newRole.code} onChange={e => setNewRole({...newRole, code: e.target.value})}/>
+            <input className="border rounded p-2 flex-1" placeholder="Tên hiển thị (vd: Bếp Chính)" value={newRole.name} onChange={e => setNewRole({...newRole, name: e.target.value})}/>
+            <button onClick={handleAdd} className="bg-emerald-600 text-white px-4 rounded font-bold">Thêm</button>
+         </div>
+         <div className="space-y-2">
+            {roles.map(r => (
+               <div key={r.code} className="flex justify-between p-3 bg-slate-50 rounded border">{r.name} <span className="text-slate-400 text-sm font-mono">{r.code}</span></div>
+            ))}
+         </div>
+      </div>
+   )
+};
+
+// --- FIX & UPDATE: QUẢN LÝ NHÂN SỰ (EDIT & ADD) ---
+const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
+  const [editingUser, setEditingUser] = useState(null); // State để sửa user
+  const [formData, setFormData] = useState({ username: '', password: '', name: '', role: roles[0]?.code || '' });
+
+  useEffect(() => {
+     if(editingUser) {
+        setFormData({ username: editingUser.username, password: editingUser.password, name: editingUser.name, role: editingUser.role });
+     } else {
+        setFormData({ username: '', password: '', name: '', role: roles[0]?.code || '' });
+     }
+  }, [editingUser, roles]);
+
+  const handleSubmit = async () => {
+    if(!formData.username || !formData.password || !formData.name) return setNotify("Thiếu thông tin!", "error");
+
+    if (editingUser) {
+        // Update
+        const { error } = await supabase.from('app_users').update({
+            password: formData.password,
+            name: formData.name,
+            role: formData.role
+        }).eq('id', editingUser.id);
+        if(error) setNotify("Lỗi cập nhật: " + error.message, "error");
+        else { setNotify("Đã cập nhật nhân viên"); setEditingUser(null); onRefresh(); }
+    } else {
+        // Insert
+        const { error } = await supabase.from('app_users').insert(formData);
+        if(error) setNotify("Lỗi thêm: " + error.message, "error");
+        else { setNotify("Đã thêm nhân viên"); onRefresh(); }
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if(confirm("Xóa nhân viên này? Dữ liệu chấm công sẽ mất.")) {
+        await supabase.from('app_users').delete().eq('id', id);
+        onRefresh();
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className={`p-5 rounded-xl border border-slate-200 transition-colors ${editingUser ? 'bg-orange-50 border-orange-200' : 'bg-white'}`}>
+         <h3 className="font-bold text-slate-700 mb-4">{editingUser ? 'Sửa Thông Tin Nhân Viên' : 'Thêm Nhân Viên Mới'}</h3>
+         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+             <input className="border rounded p-2 text-sm" placeholder="Tên đăng nhập" disabled={!!editingUser} value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})}/>
+             <input className="border rounded p-2 text-sm" placeholder="Mật khẩu" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})}/>
+             <input className="border rounded p-2 text-sm" placeholder="Họ và Tên" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
+             <select className="border rounded p-2 text-sm bg-white" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
+                 {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
+                 <option value="admin">Admin (Quản trị)</option>
+             </select>
+         </div>
+         <div className="flex gap-3 mt-4 justify-end">
+             {editingUser && <button onClick={() => setEditingUser(null)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-200 rounded">Hủy</button>}
+             <button onClick={handleSubmit} className={`px-6 py-2 text-white font-bold rounded shadow-lg ${editingUser ? 'bg-orange-600 hover:bg-orange-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                 {editingUser ? 'Lưu Thay Đổi' : 'Thêm Mới'}
+             </button>
+         </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+         <table className="w-full text-sm text-left">
+            <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
+               <tr>
+                  <th className="p-4">Nhân viên</th>
+                  <th className="p-4">Khu vực (Role)</th>
+                  <th className="p-4">Username</th>
+                  <th className="p-4 text-right">Thao tác</th>
+               </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+               {users.map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50">
+                     <td className="p-4 font-bold text-slate-700">{u.name}</td>
+                     <td className="p-4"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold uppercase text-slate-500">{u.role}</span></td>
+                     <td className="p-4 font-mono text-slate-500">{u.username}</td>
+                     <td className="p-4 text-right flex justify-end gap-2">
+                        <button onClick={() => setEditingUser(u)} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><Edit3 size={18}/></button>
+                        <button onClick={() => handleDelete(u.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18}/></button>
+                     </td>
+                  </tr>
+               ))}
+            </tbody>
+         </table>
+      </div>
+    </div>
+  );
+};
