@@ -42,24 +42,51 @@ const showNotify = (setter, msg, type = 'success') => {
   setTimeout(() => setter({ msg: '', type: '' }), 3000);
 };
 
+// --- Hàm lấy vị trí (ĐÃ SỬA LẠI: Thêm timeout và độ chính xác cao) ---
 const getCurrentLocation = () => {
   return new Promise((resolve, reject) => {
+    // 1. Kiểm tra trình duyệt có hỗ trợ không
     if (!navigator.geolocation) {
-      reject(new Error("Trình duyệt không hỗ trợ định vị."));
-    } else {
-      const options = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
-      navigator.geolocation.getCurrentPosition(
-        (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
-        (error) => {
-          let msg = "Không thể lấy vị trí.";
-          if (error.code === 1) msg = "Bạn đã chặn quyền truy cập vị trí.";
-          else if (error.code === 2) msg = "Không bắt được sóng GPS.";
-          else if (error.code === 3) msg = "Hết thời gian chờ GPS (Timeout).";
-          reject(new Error(msg));
-        },
-        options
-      );
+      reject(new Error("Trình duyệt không hỗ trợ GPS."));
+      return;
     }
+
+    // 2. Cấu hình quan trọng để không bị treo
+    const options = {
+      enableHighAccuracy: true, // Bắt buộc dùng chip GPS để chính xác nhất
+      timeout: 15000,           // Chỉ chờ tối đa 15 giây (tránh treo app mãi mãi)
+      maximumAge: 0             // Không lấy lại vị trí cũ lưu trong cache
+    };
+
+    // 3. Gọi hàm lấy vị trí
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        // Thành công
+        resolve({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+      },
+      (error) => {
+        // Thất bại - Báo lỗi rõ ràng hơn để bạn biết nguyên nhân
+        let msg = "Lỗi không xác định.";
+        switch (error.code) {
+          case 1: // PERMISSION_DENIED
+            msg = "Bạn đã chặn quyền Vị trí. Hãy vào cài đặt trình duyệt để Bật lại.";
+            break;
+          case 2: // POSITION_UNAVAILABLE
+            msg = "Thiết bị không bắt được sóng GPS. Hãy ra chỗ thoáng hơn.";
+            break;
+          case 3: // TIMEOUT
+            msg = "Hết thời gian chờ (mạng hoặc GPS quá yếu). Hãy thử lại.";
+            break;
+          default:
+            msg = error.message;
+        }
+        reject(new Error(msg));
+      },
+      options // <--- QUAN TRỌNG: Phải truyền tham số này vào
+    );
   });
 };
 
