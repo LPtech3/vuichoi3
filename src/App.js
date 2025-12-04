@@ -53,31 +53,34 @@ const getCurrentLocation = () => {
 
     // 2. Cấu hình quan trọng để không bị treo
     const options = {
-      enableHighAccuracy: true, // Bắt buộc dùng chip GPS để chính xác nhất
-      timeout: 15000,           // Chỉ chờ tối đa 15 giây (tránh treo app mãi mãi)
-      maximumAge: 0             // Không lấy lại vị trí cũ lưu trong cache
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
     };
 
     // 3. Gọi hàm lấy vị trí
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        // Thành công
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+
         resolve({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
+          lat: lat,
+          lng: lng,
+          // Link Google Maps chính xác
+          mapUrl: `https://www.google.com/maps?q=${lat},${lng}`
         });
       },
       (error) => {
-        // Thất bại - Báo lỗi rõ ràng hơn để bạn biết nguyên nhân
         let msg = "Lỗi không xác định.";
         switch (error.code) {
-          case 1: // PERMISSION_DENIED
+          case 1:
             msg = "Bạn đã chặn quyền Vị trí. Hãy vào cài đặt trình duyệt để Bật lại.";
             break;
-          case 2: // POSITION_UNAVAILABLE
+          case 2:
             msg = "Thiết bị không bắt được sóng GPS. Hãy ra chỗ thoáng hơn.";
             break;
-          case 3: // TIMEOUT
+          case 3:
             msg = "Hết thời gian chờ (mạng hoặc GPS quá yếu). Hãy thử lại.";
             break;
           default:
@@ -85,10 +88,23 @@ const getCurrentLocation = () => {
         }
         reject(new Error(msg));
       },
-      options // <--- QUAN TRỌNG: Phải truyền tham số này vào
+      options
     );
   });
 };
+
+// Cách dùng:
+getCurrentLocation()
+  .then(result => {
+    console.log(`Vị trí: ${result.lat}, ${result.lng}`);
+    console.log(`Link Google Maps: ${result.mapUrl}`);
+
+    // Mở link trong tab mới
+    window.open(result.mapUrl, '_blank');
+  })
+  .catch(error => {
+    console.error(error.message);
+  });
 
 const checkIsDue = (timeLabel, isDone = false) => {
   if (isDone || !timeLabel || typeof timeLabel !== 'string' || !timeLabel.includes(':')) return false;
