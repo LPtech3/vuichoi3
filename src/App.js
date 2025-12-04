@@ -53,34 +53,31 @@ const getCurrentLocation = () => {
 
     // 2. Cấu hình quan trọng để không bị treo
     const options = {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 0
+      enableHighAccuracy: true, // Bắt buộc dùng chip GPS để chính xác nhất
+      timeout: 15000,           // Chỉ chờ tối đa 15 giây (tránh treo app mãi mãi)
+      maximumAge: 0             // Không lấy lại vị trí cũ lưu trong cache
     };
 
     // 3. Gọi hàm lấy vị trí
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-
+        // Thành công
         resolve({
-          lat: lat,
-          lng: lng,
-          // Link Google Maps chính xác
-          mapUrl: `https://www.google.com/maps?q=${lat},${lng}`
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
         });
       },
       (error) => {
+        // Thất bại - Báo lỗi rõ ràng hơn để bạn biết nguyên nhân
         let msg = "Lỗi không xác định.";
         switch (error.code) {
-          case 1:
+          case 1: // PERMISSION_DENIED
             msg = "Bạn đã chặn quyền Vị trí. Hãy vào cài đặt trình duyệt để Bật lại.";
             break;
-          case 2:
+          case 2: // POSITION_UNAVAILABLE
             msg = "Thiết bị không bắt được sóng GPS. Hãy ra chỗ thoáng hơn.";
             break;
-          case 3:
+          case 3: // TIMEOUT
             msg = "Hết thời gian chờ (mạng hoặc GPS quá yếu). Hãy thử lại.";
             break;
           default:
@@ -88,23 +85,10 @@ const getCurrentLocation = () => {
         }
         reject(new Error(msg));
       },
-      options
+      options // <--- QUAN TRỌNG: Phải truyền tham số này vào
     );
   });
 };
-
-// Cách dùng:
-getCurrentLocation()
-  .then(result => {
-    console.log(`Vị trí: ${result.lat}, ${result.lng}`);
-    console.log(`Link Google Maps: ${result.mapUrl}`);
-
-    // Mở link trong tab mới
-    window.open(result.mapUrl, '_blank');
-  })
-  .catch(error => {
-    console.error(error.message);
-  });
 
 const checkIsDue = (timeLabel, isDone = false) => {
   if (isDone || !timeLabel || typeof timeLabel !== 'string' || !timeLabel.includes(':')) return false;
@@ -1137,11 +1121,18 @@ const AdminTimesheet = ({ users }) => {
                     ) : '-'}
                  </td>
                  <td className="p-4">
-                    {log.lat ? (
-                       <a href={`http://googleusercontent.com/maps.google.com/?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
-                          <MapPin size={14}/> Xem Map
-                       </a>
-                    ) : <span className="text-slate-400 text-xs">Không có GPS</span>}
+                    {l.lat && l.lng ? (
+                     <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${l.lat},${l.lng}`}
+                        target="_blank"
+                         rel="noreferrer"
+                        className="text-blue-600 hover:underline flex items-center gap-1"
+                        >
+                         <MapPin size={14} /> Vị trí
+                     </a>
+                ) : (
+                        <span className="text-slate-400 text-xs">Không có GPS</span>
+                         )}
                  </td>
                </tr>
              ))}
