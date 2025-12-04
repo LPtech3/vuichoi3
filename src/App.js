@@ -1121,18 +1121,11 @@ const AdminTimesheet = ({ users }) => {
                     ) : '-'}
                  </td>
                  <td className="p-4">
-                    {l.lat && l.lng ? (
-                     <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${l.lat},${l.lng}`}
-                        target="_blank"
-                         rel="noreferrer"
-                        className="text-blue-600 hover:underline flex items-center gap-1"
-                        >
-                         <MapPin size={14} /> Vị trí
-                     </a>
-                ) : (
-                        <span className="text-slate-400 text-xs">Không có GPS</span>
-                         )}
+                    {log.lat ? (
+                       <a href={`http://maps.google.com/?q=${log.lat},${log.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-blue-600 font-bold hover:underline">
+                          <MapPin size={14}/> Xem Map
+                       </a>
+                    ) : <span className="text-slate-400 text-xs">Không có GPS</span>}
                  </td>
                </tr>
              ))}
