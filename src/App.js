@@ -813,96 +813,110 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
 };
 
 // ==========================================
-// COMPONENT: THỐNG KÊ & TÍNH LƯƠNG (ĐÃ CẬP NHẬT)
+// COMPONENT: THỐNG KÊ & TÍNH LƯƠNG (ĐÃ SỬA LỌC & ĐA VAI TRÒ)
 // ==========================================
 const AdminStatistics = ({ users, roles, allTasks }) => {
   const now = new Date();
-  // State ngày tháng
+  // Mặc định từ ngày 1 đầu tháng đến hôm nay
   const [fromDate, setFromDate] = useState(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
-  const [toDate, setToDate] = useState(getTodayISO());
+  const [toDate, setToDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // State dữ liệu và hiển thị
+  // State dữ liệu
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selectedUserStats, setSelectedUserStats] = useState(null);
 
-  // --- MỚI: State lọc theo nhân viên ---
+  // State lọc nhân viên (Lưu ID nhân viên được chọn)
   const [filterUserId, setFilterUserId] = useState('');
 
   const handleCalculate = async () => {
     setLoading(true);
-    setStats(null); // Reset kết quả cũ
+    setStats(null);
     try {
-      // 1. Lấy dữ liệu chấm công (Logs) trong khoảng ngày
-      const { data: logs } = await supabase
+      // 1. Lấy tất cả log chấm công trong khoảng ngày
+      const { data: logs, error: logError } = await supabase
         .from('time_logs')
         .select('*')
         .gte('report_date', fromDate)
         .lte('report_date', toDate);
 
-      // 2. Lấy dữ liệu báo cáo việc (Checklists) trong khoảng ngày
-      const { data: checkData } = await supabase
+      if (logError) throw logError;
+
+      // 2. Lấy tất cả báo cáo công việc (checklist) trong khoảng ngày
+      const { data: checkData, error: checkError } = await supabase
         .from('checklist_logs')
         .select('*')
         .gte('report_date', fromDate)
         .lte('report_date', toDate);
 
+      if (checkError) throw checkError;
+
       const rawLogs = logs || [];
       const rawChecklists = checkData || [];
 
-      // --- MỚI: ÁP DỤNG LỌC NHÂN VIÊN ---
-      // Nếu có chọn nhân viên (filterUserId khác rỗng) thì lọc danh sách users cần tính
+      // 3. Xác định danh sách nhân viên cần tính
+      // Nếu có chọn filterUserId thì chỉ tính người đó, ngược lại tính hết
       let targetUsers = users;
       if (filterUserId) {
         targetUsers = users.filter(u => u.id.toString() === filterUserId.toString());
       }
 
-      // 3. Tính toán cho danh sách nhân viên đã lọc
+      // 4. Vòng lặp tính toán chi tiết cho từng nhân viên
       const processed = targetUsers.map(user => {
+         // Tách chuỗi role: "bếp, phục vụ" -> ['bếp', 'phục vụ']
          const userRoles = user.role ? user.role.split(',').map(r => r.trim()) : [];
 
-         // Lọc log của user này
+         // --- TÍNH GIỜ LÀM (Time Logs) ---
+         // Chỉ lấy log của user này
          const userLogs = rawLogs.filter(l => l.user_id === user.id);
          userLogs.sort((a, b) => new Date(a.log_time) - new Date(b.log_time));
 
-         // Tính tổng giờ làm
          let totalMillis = 0;
-         const validWorkDays = new Set();
+         const validWorkDays = new Set(); // Dùng Set để đếm số ngày làm việc độc nhất
 
-         // Gom log theo ngày để tính cặp Check-in / Check-out
+         // Gom nhóm log theo ngày để tính Check-in / Check-out
          const distinctDates = [...new Set(userLogs.map(l => l.report_date))];
+
          distinctDates.forEach(dateStr => {
              const dayLogs = userLogs.filter(l => l.report_date === dateStr);
              let currentCheckIn = null;
+
              dayLogs.forEach(log => {
                  if(log.action_type === 'check_in') {
                      currentCheckIn = new Date(log.log_time);
                  } else if (log.action_type === 'check_out' && currentCheckIn) {
                      const outTime = new Date(log.log_time);
                      totalMillis += (outTime - currentCheckIn);
-                     validWorkDays.add(dateStr); // Ngày này có log hợp lệ
-                     currentCheckIn = null;
+                     validWorkDays.add(dateStr); // Đánh dấu ngày này có làm
+                     currentCheckIn = null; // Reset cặp
                  }
              });
          });
 
          const totalHours = (totalMillis / (1000 * 60 * 60));
 
-         // Tính KPI (Tiến độ công việc)
+         // --- TÍNH KPI (Checklists) ---
+         // Logic: User có nhiều role, ta lấy tất cả checklist log khớp với BẤT KỲ role nào của user
          let totalTasksAssigned = 0;
          let totalTasksDone = 0;
 
-         // Lấy các checklist liên quan đến role của user này
+         // Lọc ra các bản ghi checklist thuộc về các role mà nhân viên này đảm nhận
          const userChecklists = rawChecklists.filter(c => userRoles.includes(c.role));
 
          userChecklists.forEach(cl => {
-             // Số việc định nghĩa cho Role này
-             const roleDefCount = allTasks.filter(t => t.role === cl.role).length;
-             totalTasksAssigned += roleDefCount;
+             // Tìm xem role này (cl.role) được giao bao nhiêu việc trong bảng định nghĩa (allTasks)
+             const roleDefTasks = allTasks.filter(t => t.role === cl.role);
+             const roleDefCount = roleDefTasks.length;
 
-             // Số việc đã làm (sent = true)
-             const tasksInLog = Object.values(cl.data || {});
-             totalTasksDone += tasksInLog.filter(t => t.sent).length;
+             // Nếu role này có định nghĩa việc thì mới tính
+             if (roleDefCount > 0) {
+                 totalTasksAssigned += roleDefCount;
+
+                 // Đếm số việc đã làm (sent = true) trong log
+                 const tasksInLog = Object.values(cl.data || {});
+                 const doneCount = tasksInLog.filter(t => t.sent).length;
+                 totalTasksDone += doneCount;
+             }
          });
 
          const completionRate = totalTasksAssigned === 0 ? 0 : Math.round((totalTasksDone / totalTasksAssigned) * 100);
@@ -910,16 +924,17 @@ const AdminStatistics = ({ users, roles, allTasks }) => {
          return {
             id: user.id,
             name: user.name,
-            role: user.role,
+            role: user.role, // Giữ nguyên chuỗi gốc để hiển thị
             username: user.username,
             workDays: validWorkDays.size,
             totalHours: totalHours.toFixed(1),
             completionRate,
-            // Lưu dữ liệu thô để xem chi tiết
+            // Lưu dữ liệu thô để dùng cho modal chi tiết
             details_logs: userLogs,
-            details_checklists: userChecklists
+            details_checklists: userChecklists,
+            parsedRoles: userRoles // Mảng role đã tách
          };
-      }).filter(Boolean);
+      }).filter(Boolean); // Lọc bỏ giá trị null nếu có
 
       setStats(processed);
 
@@ -931,23 +946,23 @@ const AdminStatistics = ({ users, roles, allTasks }) => {
     }
   };
 
-  // Hàm xem chi tiết (khi click vào user)
+  // Hàm hiển thị chi tiết từng ngày khi bấm "Xem chi tiết"
   const handleViewUserDetail = (userStat) => {
       const dates = [];
       let curr = new Date(fromDate);
       const end = new Date(toDate);
+
+      // Tạo danh sách tất cả các ngày trong khoảng chọn
       while (curr <= end) {
           dates.push(curr.toISOString().split('T')[0]);
           curr.setDate(curr.getDate() + 1);
       }
 
-      const userRoles = userStat.role.split(',').map(r => r.trim());
-
       const detailData = dates.map(dateStr => {
-          // Tìm log check-in/out trong ngày
+          // 1. Tìm giờ vào ra
           const dayLogs = (userStat.details_logs || []).filter(l => l.report_date === dateStr);
           const checkIn = dayLogs.find(l => l.action_type === 'check_in');
-          const checkOut = dayLogs.find(l => l.action_type === 'check_out');
+          const checkOut = dayLogs.find(l => l.action_type === 'check_out'); // Lấy check-out cuối hoặc logic tùy ý
 
           let hours = 0;
           if(checkIn && checkOut) {
@@ -956,103 +971,169 @@ const AdminStatistics = ({ users, roles, allTasks }) => {
               if(outTime > inTime) hours = (outTime - inTime) / (1000 * 60 * 60);
           }
 
-          // Tính KPI ngày hôm đó
+          // 2. Tính KPI ngày đó (Gộp tất cả role của user)
           let assigned = 0;
           let done = 0;
-          userRoles.forEach(r => {
+
+          // Duyệt qua từng role mà user sở hữu (ví dụ: bếp, kho)
+          userStat.parsedRoles.forEach(r => {
+              // Tìm checklist log của ngày đó và role đó
               const cl = (userStat.details_checklists || []).find(c => c.report_date === dateStr && c.role === r);
-              // Chỉ tính nếu role đó có định nghĩa task
+
+              // Số việc định nghĩa cho role này
               const roleDefCount = allTasks.filter(t => t.role === r).length;
-              if (roleDefCount > 0 && cl) {
-                   assigned += roleDefCount;
-                   const val = Object.values(cl.data || {});
-                   done += val.filter(v => v.sent).length;
+
+              if (roleDefCount > 0) {
+                   assigned += roleDefCount; // Cộng dồn số việc được giao
+                   if (cl) {
+                       const val = Object.values(cl.data || {});
+                       done += val.filter(v => v.sent).length; // Cộng dồn số việc đã làm
+                   }
               }
           });
 
           const rate = assigned === 0 ? 0 : Math.round((done / assigned) * 100);
 
-          return {
+          // Chỉ trả về nếu có dữ liệu (có log hoặc có kpi)
+          const hasData = checkIn || checkOut || assigned > 0;
+
+          return hasData ? {
               date: dateStr,
-              in: checkIn ? new Date(checkIn.log_time).toLocaleTimeString('vi-VN') : '--:--',
-              out: checkOut ? new Date(checkOut.log_time).toLocaleTimeString('vi-VN') : '--:--',
+              in: checkIn ? new Date(checkIn.log_time).toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : '--:--',
+              out: checkOut ? new Date(checkOut.log_time).toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : '--:--',
               hours: hours.toFixed(1),
-              completionRate: rate
-          };
-      });
+              completionRate: rate,
+              assigned,
+              done
+          } : null;
+      }).filter(Boolean); // Loại bỏ các ngày không có dữ liệu gì
 
       setSelectedUserStats({ info: userStat, details: detailData });
   };
 
   return (
-    <div className="space-y-4">
-       {/* THANH CÔNG CỤ: NGÀY THÁNG & LỌC NHÂN VIÊN */}
-       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-end md:items-center">
-           <div>
-               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Từ ngày</label>
-               <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold" />
-           </div>
-           <div>
-               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Đến ngày</label>
-               <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm font-bold" />
-           </div>
+    <div className="space-y-6">
+       {/* --- THANH CÔNG CỤ FILTER --- */}
+       <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+               {/* Chọn ngày bắt đầu */}
+               <div>
+                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Từ ngày</label>
+                   <input
+                      type="date"
+                      value={fromDate}
+                      onChange={e => setFromDate(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-blue-500 outline-none"
+                   />
+               </div>
+               {/* Chọn ngày kết thúc */}
+               <div>
+                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Đến ngày</label>
+                   <input
+                      type="date"
+                      value={toDate}
+                      onChange={e => setToDate(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-blue-500 outline-none"
+                   />
+               </div>
 
-           {/* --- SELECT CHỌN NHÂN VIÊN --- */}
-           <div className="flex-1 w-full md:w-auto">
-               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Lọc Nhân viên</label>
-               <select
-                  value={filterUserId}
-                  onChange={e => setFilterUserId(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm font-bold bg-slate-50 cursor-pointer"
+               {/* Select Chọn Nhân viên */}
+               <div>
+                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nhân viên</label>
+                   <div className="relative">
+                       <select
+                          value={filterUserId}
+                          onChange={e => setFilterUserId(e.target.value)}
+                          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-semibold appearance-none bg-slate-50 cursor-pointer focus:ring-2 focus:ring-blue-500 outline-none"
+                       >
+                           <option value="">-- Tất cả nhân viên --</option>
+                           {users.map(u => (
+                               <option key={u.id} value={u.id}>{u.name}</option>
+                           ))}
+                       </select>
+                       <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                           <ChevronRight className="rotate-90" size={16}/>
+                       </div>
+                   </div>
+               </div>
+
+               {/* Nút tính toán */}
+               <button
+                  onClick={handleCalculate}
+                  disabled={loading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-500/30 transition-all active:scale-95"
                >
-                   <option value="">-- Tất cả nhân viên --</option>
-                   {users.map(u => (
-                       <option key={u.id} value={u.id}>{u.name} (@{u.username})</option>
-                   ))}
-               </select>
+                   {loading ? <Loader2 className="animate-spin" size={18}/> : <RefreshCcw size={18}/>}
+                   <span>Thống kê</span>
+               </button>
            </div>
-
-           <button onClick={handleCalculate} disabled={loading} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-blue-700 shadow-lg shadow-blue-500/30 whitespace-nowrap">
-               {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tính Toán
-           </button>
        </div>
 
-       {/* BẢNG KẾT QUẢ */}
+       {/* --- BẢNG KẾT QUẢ --- */}
        {stats && (
-           <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+           <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden animate-in fade-in duration-300">
+             <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                    <BarChart3 size={20} className="text-blue-600"/>
+                    Kết quả ({stats.length} nhân viên)
+                </h3>
+                <span className="text-xs text-slate-500 font-mono">{fromDate} → {toDate}</span>
+             </div>
+
              <div className="overflow-x-auto">
                <table className="w-full text-sm text-left">
                   <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
                      <tr>
-                        <th className="p-4">Nhân viên</th>
-                        <th className="p-4 text-center">Số ngày làm</th>
+                        <th className="p-4">Nhân viên / Vai trò</th>
+                        <th className="p-4 text-center">Ngày công</th>
                         <th className="p-4 text-center">Tổng giờ</th>
-                        <th className="p-4">KPI Hoàn thành</th>
-                        <th className="p-4 text-right">Chi tiết</th>
+                        <th className="p-4">Hiệu suất (KPI)</th>
+                        <th className="p-4 text-right">Tác vụ</th>
                      </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                      {stats.length === 0 ? (
-                         <tr><td colSpan={5} className="p-6 text-center text-slate-400 italic">Không có dữ liệu trong khoảng thời gian này.</td></tr>
+                         <tr><td colSpan={5} className="p-8 text-center text-slate-400 italic">Không tìm thấy dữ liệu phù hợp.</td></tr>
                      ) : (
                          stats.map(s => (
-                            <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                            <tr key={s.id} className="hover:bg-blue-50/50 transition-colors">
                                <td className="p-4">
-                                  <div className="font-bold text-slate-700">{s.name}</div>
-                                  <div className="text-xs text-slate-400">@{s.username}</div>
+                                  <div className="font-bold text-slate-800 text-base">{s.name}</div>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                      {/* Hiển thị các role dưới dạng badge */}
+                                      {s.role.split(',').map(r => (
+                                          <span key={r} className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px] uppercase font-bold text-slate-500">
+                                              {r.trim()}
+                                          </span>
+                                      ))}
+                                  </div>
                                </td>
-                               <td className="p-4 text-center font-bold text-slate-600">{s.workDays}</td>
-                               <td className="p-4 text-center font-bold text-blue-600 text-lg">{s.totalHours}h</td>
+                               <td className="p-4 text-center">
+                                   <span className="font-bold text-slate-700 bg-slate-100 px-3 py-1 rounded-full">{s.workDays}</span>
+                               </td>
+                               <td className="p-4 text-center">
+                                   <span className="font-bold text-blue-600 text-lg">{s.totalHours}</span>
+                                   <span className="text-xs text-slate-400 ml-1">giờ</span>
+                               </td>
                                <td className="p-4">
-                                  <div className="flex items-center gap-2">
-                                     <div className="w-24 bg-slate-200 rounded-full h-2">
-                                        <div className={`h-2 rounded-full ${s.completionRate >= 80 ? 'bg-emerald-500' : (s.completionRate >= 50 ? 'bg-blue-500' : 'bg-orange-500')}`} style={{width: `${s.completionRate}%`}}></div>
-                                     </div>
-                                     <span className="font-bold text-xs">{s.completionRate}%</span>
+                                  <div className="w-full max-w-[140px]">
+                                      <div className="flex justify-between text-xs mb-1 font-bold">
+                                          <span className={s.completionRate >= 80 ? 'text-emerald-600' : 'text-slate-600'}>
+                                              {s.completionRate}%
+                                          </span>
+                                      </div>
+                                      <div className="w-full bg-slate-200 rounded-full h-2">
+                                          <div
+                                            className={`h-2 rounded-full transition-all duration-500 ${s.completionRate >= 80 ? 'bg-emerald-500' : (s.completionRate >= 50 ? 'bg-blue-500' : 'bg-orange-500')}`}
+                                            style={{width: `${s.completionRate}%`}}
+                                          ></div>
+                                      </div>
                                   </div>
                                </td>
                                <td className="p-4 text-right">
-                                  <button onClick={() => handleViewUserDetail(s)} className="text-blue-600 hover:bg-blue-50 p-2 rounded-lg font-bold text-xs">Xem chi tiết</button>
+                                  <button onClick={() => handleViewUserDetail(s)} className="text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-bold text-xs transition-colors">
+                                      Chi tiết
+                                  </button>
                                </td>
                             </tr>
                          ))
@@ -1063,47 +1144,62 @@ const AdminStatistics = ({ users, roles, allTasks }) => {
            </div>
        )}
 
-       {/* MODAL CHI TIẾT (GIỮ NGUYÊN) */}
+       {/* --- MODAL CHI TIẾT --- */}
        {selectedUserStats && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+        <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+              <div className="p-5 border-b flex justify-between items-center bg-slate-50">
                  <div>
-                    <h3 className="text-lg font-bold text-slate-800">{selectedUserStats.info.name}</h3>
-                    <p className="text-xs text-slate-500 uppercase">{selectedUserStats.info.role} | {fromDate} - {toDate}</p>
+                    <h3 className="text-xl font-bold text-slate-800">{selectedUserStats.info.name}</h3>
+                    <p className="text-xs text-slate-500 uppercase mt-1 flex gap-2">
+                        <span>@{selectedUserStats.info.username}</span> •
+                        <span>{fromDate} - {toDate}</span>
+                    </p>
                  </div>
-                 <button onClick={() => setSelectedUserStats(null)} className="p-2 hover:bg-slate-200 rounded-full"><X size={20}/></button>
+                 <button onClick={() => setSelectedUserStats(null)} className="p-2 hover:bg-red-50 hover:text-red-500 rounded-full transition-colors"><X size={24}/></button>
               </div>
-              <div className="overflow-y-auto p-4">
-                 <table className="w-full text-sm text-left border rounded-lg overflow-hidden">
-                    <thead className="bg-slate-100 text-slate-600 font-bold text-xs uppercase">
+
+              <div className="overflow-y-auto p-0">
+                 <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-100 text-slate-600 font-bold text-xs uppercase sticky top-0 shadow-sm z-10">
                        <tr>
-                          <th className="p-3">Ngày</th>
-                          <th className="p-3">Giờ Vào</th>
-                          <th className="p-3">Giờ Ra</th>
-                          <th className="p-3 text-center">Giờ làm</th>
-                          <th className="p-3">Tiến độ KPI</th>
+                          <th className="p-4">Ngày</th>
+                          <th className="p-4">Vào / Ra</th>
+                          <th className="p-4 text-center">Số giờ</th>
+                          <th className="p-4">Công việc (KPI)</th>
                        </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                        {selectedUserStats.details.map((d, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
-                             <td className="p-3 font-mono text-slate-600">{d.date}</td>
-                             <td className="p-3 font-bold text-blue-600">{d.in}</td>
-                             <td className="p-3 font-bold text-rose-600">{d.out}</td>
-                             <td className="p-3 text-center font-bold">{d.hours}h</td>
-                             <td className="p-3">
-                                <div className="flex items-center gap-2">
-                                   <div className="w-24 bg-slate-200 rounded-full h-2">
-                                      <div className={`h-2 rounded-full ${d.completionRate >= 80 ? 'bg-emerald-500' : 'bg-orange-500'}`} style={{width: `${d.completionRate}%`}}></div>
+                             <td className="p-4 font-mono text-slate-600 font-bold whitespace-nowrap">{d.date}</td>
+                             <td className="p-4">
+                                <div className="flex flex-col gap-1 text-xs">
+                                    <span className="flex items-center gap-2 text-emerald-600 font-bold"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div> {d.in}</span>
+                                    <span className="flex items-center gap-2 text-rose-600 font-bold"><div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div> {d.out}</span>
+                                </div>
+                             </td>
+                             <td className="p-4 text-center font-bold text-slate-700">{d.hours}h</td>
+                             <td className="p-4">
+                                <div className="flex items-center gap-3">
+                                   <div className="flex-1 w-24 bg-slate-200 rounded-full h-1.5">
+                                      <div className={`h-1.5 rounded-full ${d.completionRate >= 80 ? 'bg-emerald-500' : 'bg-orange-500'}`} style={{width: `${d.completionRate}%`}}></div>
                                    </div>
-                                   <span className="font-bold text-xs">{d.completionRate}%</span>
+                                   <div className="text-xs font-bold text-slate-600 w-12 text-right">
+                                       {d.done}/{d.assigned}
+                                   </div>
                                 </div>
                              </td>
                           </tr>
                        ))}
                     </tbody>
                  </table>
+                 {selectedUserStats.details.length === 0 && (
+                     <div className="p-10 text-center text-slate-400">Không có dữ liệu chi tiết nào trong khoảng này.</div>
+                 )}
+              </div>
+              <div className="p-4 border-t bg-slate-50 text-right">
+                  <button onClick={() => setSelectedUserStats(null)} className="px-5 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold rounded-lg text-sm">Đóng</button>
               </div>
            </div>
         </div>
