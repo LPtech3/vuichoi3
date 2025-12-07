@@ -508,17 +508,7 @@ const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }
     };
 
     const sendSingleTask = async (taskDefId) => {
-       const prevReportData = { ...reportData }; // Lưu lại bản backup
-       onUpdateLocal(prev => ({ ...prev, [activeRole]: newReportData })); // Cập nhật giả định
-       try {
-         const { error } = await supabase...
-            if(error) throw error;
-                 // Thành công
-                } catch (err) {
-                // KHI LỖI: Khôi phục lại dữ liệu cũ
-                 onUpdateLocal(prev => ({ ...prev, [activeRole]: prevReportData }));
-                setNotify("Gửi lỗi, vui lòng thử lại", "error");
-                }
+
        const item = reportData[taskDefId];
        if(!item || !item.done) return setNotify("Chưa hoàn thành!", "error");
        const taskDef = tasks.find(t => t.id === taskDefId);
