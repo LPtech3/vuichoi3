@@ -999,106 +999,279 @@ const ManagerTaskAssignment = ({ users, roles, onRefresh, setNotify }) => {
         </div>
     );
 }
-const AdminShiftScheduling = ({ users, roles, setNotify }) => {
-    const [viewDate, setViewDate] = useState(getTodayISO());
-    const [shifts, setShifts] = useState([]);
-    const [loading, setLoading] = useState(false);
+// ==========================================
+// COMPONENT: SẮP CA LÀM VIỆC (MULTI-DAY & MULTI-ROLE)
+// ==========================================
+const AdminShiftScheduler = ({ users, roles }) => {
+  // State form
+  const [fromDate, setFromDate] = useState(getTodayISO());
+  const [toDate, setToDate] = useState(getTodayISO());
+  const [selectedUser, setSelectedUser] = useState('');
+  const [selectedRoles, setSelectedRoles] = useState([]); // Array roles
+  const [note, setNote] = useState('');
 
-    // Load ca làm việc theo ngày chọn
-    useEffect(() => {
-        const fetchShifts = async () => {
-            setLoading(true);
-            const { data } = await supabase.from('work_shifts').select('*').eq('shift_date', viewDate);
-            setShifts(data || []);
-            setLoading(false);
-        };
-        fetchShifts();
-    }, [viewDate]);
+  // State lọc thứ (Mặc định chọn hết cả tuần)
+  const [selectedDaysOfWeek, setSelectedDaysOfWeek] = useState([0,1,2,3,4,5,6]); // 0=CN, 1=T2...
 
-    const handleAssignShift = async (userId, areaCode, startTime) => {
-        if (!areaCode || !startTime) return;
-        try {
-            const { error } = await supabase.from('work_shifts').upsert({
-                user_id: userId,
-                shift_date: viewDate,
-                area_code: areaCode,
-                start_time: startTime
-            }, { onConflict: 'user_id, shift_date' });
+  const [loading, setLoading] = useState(false);
+  const [shifts, setShifts] = useState([]);
+  const [viewDate, setViewDate] = useState(getTodayISO()); // Để xem lịch
 
-            if (error) throw error;
-            setNotify("Đã lưu ca làm việc", "success");
+  // Danh sách thứ
+  const daysOfWeek = [
+    { val: 1, label: 'T2' },
+    { val: 2, label: 'T3' },
+    { val: 3, label: 'T4' },
+    { val: 4, label: 'T5' },
+    { val: 5, label: 'T6' },
+    { val: 6, label: 'T7' },
+    { val: 0, label: 'CN' },
+  ];
 
-            // Refresh local state
-            const { data } = await supabase.from('work_shifts').select('*').eq('shift_date', viewDate);
-            setShifts(data || []);
-        } catch (err) {
-            setNotify("Lỗi lưu ca: " + err.message, "error");
-        }
-    };
+  // Load lịch làm việc để hiển thị bên dưới
+  const fetchShifts = async () => {
+    const { data, error } = await supabase
+      .from('work_shifts')
+      .select('*')
+      .eq('date', viewDate);
+    if (!error) setShifts(data || []);
+  };
 
-    const handleDeleteShift = async (id) => {
-        if(!window.confirm("Xóa ca này?")) return;
-        await supabase.from('work_shifts').delete().eq('id', id);
-        setShifts(prev => prev.filter(s => s.id !== id));
-    };
+  useEffect(() => {
+    fetchShifts();
+  }, [viewDate]);
 
-    return (
-        <div className="space-y-6">
-            <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center gap-4">
-                <span className="font-bold text-slate-700">Chọn ngày sắp ca:</span>
-                <input type="date" value={viewDate} onChange={e => setViewDate(e.target.value)} className="border rounded-lg px-3 py-2 font-bold text-blue-600"/>
-                {loading && <Loader2 className="animate-spin text-blue-600"/>}
-            </div>
-
-            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
-                        <tr>
-                            <th className="p-4 w-1/3">Nhân viên</th>
-                            <th className="p-4 w-1/3">Khu vực làm việc</th>
-                            <th className="p-4 w-1/3">Giờ bắt đầu</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                        {users.filter(u => u.role !== 'admin').map(u => {
-                            const userShift = shifts.find(s => s.user_id === u.id);
-                            return (
-                                <tr key={u.id} className="hover:bg-slate-50">
-                                    <td className="p-4 font-bold text-slate-700">
-                                        {u.name}
-                                        <div className="text-xs text-slate-400 font-normal">@{u.username}</div>
-                                    </td>
-                                    <td className="p-4">
-                                        <select
-                                            className={`w-full border rounded p-2 font-medium ${userShift ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50'}`}
-                                            value={userShift?.area_code || ''}
-                                            onChange={(e) => handleAssignShift(u.id, e.target.value, userShift?.start_time || '08:00')}
-                                        >
-                                            <option value="">-- Nghỉ --</option>
-                                            {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-                                        </select>
-                                    </td>
-                                    <td className="p-4 flex items-center gap-2">
-                                        <input
-                                            type="time"
-                                            className="border rounded p-2 font-bold text-slate-700"
-                                            value={userShift?.start_time || '08:00'}
-                                            onChange={(e) => handleAssignShift(u.id, userShift?.area_code, e.target.value)}
-                                        />
-                                        {userShift && (
-                                            <button onClick={() => handleDeleteShift(userShift.id)} className="p-2 text-red-500 hover:bg-red-50 rounded">
-                                                <X size={16}/>
-                                            </button>
-                                        )}
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+  // Xử lý chọn Role (Multi-select)
+  const toggleRole = (roleCode) => {
+    setSelectedRoles(prev =>
+      prev.includes(roleCode)
+        ? prev.filter(r => r !== roleCode)
+        : [...prev, roleCode]
     );
+  };
+
+  // Xử lý chọn Thứ (Multi-select)
+  const toggleDay = (dayVal) => {
+    setSelectedDaysOfWeek(prev =>
+      prev.includes(dayVal)
+        ? prev.filter(d => d !== dayVal)
+        : [...prev, dayVal]
+    );
+  };
+
+  // HÀM LƯU CA (QUAN TRỌNG)
+  const handleSaveShift = async () => {
+    if (!selectedUser || selectedRoles.length === 0) {
+      alert("Vui lòng chọn Nhân viên và ít nhất 1 Công việc.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const inserts = [];
+
+      // 1. Tạo danh sách các ngày trong khoảng From - To
+      let currentDate = new Date(fromDate);
+      const end = new Date(toDate);
+
+      while (currentDate <= end) {
+        const dayOfWeek = currentDate.getDay(); // 0-6
+
+        // 2. Chỉ tạo lịch nếu ngày đó nằm trong danh sách thứ đã chọn
+        if (selectedDaysOfWeek.includes(dayOfWeek)) {
+           const dateStr = currentDate.toISOString().split('T')[0];
+
+           // 3. Với mỗi ngày, tạo record cho từng Role đã chọn
+           selectedRoles.forEach(roleCode => {
+             inserts.push({
+               user_id: selectedUser,
+               role: roleCode,
+               date: dateStr,
+               shift_name: 'Ca hành chính', // Mặc định hoặc bỏ
+               start_time: null, // Đã bỏ nhập giờ theo yêu cầu
+               end_time: null,
+               note: note
+             });
+           });
+        }
+        // Tăng thêm 1 ngày
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      if (inserts.length === 0) {
+        alert("Không có ngày nào được chọn trong khoảng thời gian này.");
+        setLoading(false);
+        return;
+      }
+
+      // 4. Gửi lên Supabase (Upsert để đè nếu trùng, hoặc Insert)
+      // Lưu ý: Cần cấu hình UNIQUE(user_id, date, role) trong DB nếu muốn tránh trùng lặp
+      const { error } = await supabase.from('work_shifts').insert(inserts);
+
+      if (error) throw error;
+
+      alert(`Đã xếp thành công ${inserts.length} lượt ca!`);
+      // Reset form
+      setNote('');
+      fetchShifts(); // Refresh list
+
+    } catch (error) {
+      console.error("Lỗi lưu ca:", error);
+      alert("Lỗi: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Hàm xóa ca
+  const handleDeleteShift = async (id) => {
+    if(!window.confirm("Xóa ca làm việc này?")) return;
+    await supabase.from('work_shifts').delete().eq('id', id);
+    fetchShifts();
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+      {/* --- FORM SẮP CA --- */}
+      <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+        <h3 className="font-bold text-lg text-slate-800 mb-4 flex items-center gap-2">
+           <CalendarClock className="text-blue-600"/> Sắp Xếp Lịch Làm Việc
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+          {/* CỘT TRÁI: Thời gian & Nhân sự */}
+          <div className="space-y-4">
+             {/* Chọn khoảng ngày */}
+             <div>
+               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Khoảng thời gian áp dụng</label>
+               <div className="flex items-center gap-2">
+                 <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="w-full border rounded-lg px-3 py-2 font-bold text-slate-700"/>
+                 <span className="text-slate-400">➔</span>
+                 <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="w-full border rounded-lg px-3 py-2 font-bold text-slate-700"/>
+               </div>
+             </div>
+
+             {/* Lọc Thứ trong tuần */}
+             <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Lặp lại vào các thứ</label>
+                <div className="flex gap-2">
+                   {daysOfWeek.map(day => (
+                      <button
+                        key={day.val}
+                        onClick={() => toggleDay(day.val)}
+                        className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center transition-all ${selectedDaysOfWeek.includes(day.val) ? 'bg-blue-600 text-white shadow-md scale-110' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                      >
+                        {day.label}
+                      </button>
+                   ))}
+                </div>
+             </div>
+
+             {/* Chọn Nhân viên */}
+             <div>
+               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nhân viên</label>
+               <select
+                  value={selectedUser}
+                  onChange={e => setSelectedUser(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 font-bold text-slate-700 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500"
+               >
+                  <option value="">-- Chọn nhân viên --</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                  ))}
+               </select>
+             </div>
+          </div>
+
+          {/* CỘT PHẢI: Công việc & Ghi chú */}
+          <div className="space-y-4">
+             {/* Chọn Công việc (Multi-select) */}
+             <div>
+               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Phân công vị trí (Chọn nhiều)</label>
+               <div className="grid grid-cols-2 gap-2 max-h-[150px] overflow-y-auto p-2 border rounded-lg bg-slate-50">
+                  {roles.map(r => (
+                     <label key={r.code} className={`flex items-center gap-2 p-2 rounded cursor-pointer transition-colors border ${selectedRoles.includes(r.code) ? 'bg-blue-50 border-blue-200' : 'bg-white border-transparent hover:bg-slate-100'}`}>
+                        <input
+                           type="checkbox"
+                           checked={selectedRoles.includes(r.code)}
+                           onChange={() => toggleRole(r.code)}
+                           className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                        <span className={`text-sm font-semibold ${selectedRoles.includes(r.code) ? 'text-blue-700' : 'text-slate-600'}`}>{r.name}</span>
+                     </label>
+                  ))}
+               </div>
+             </div>
+
+             {/* Ghi chú */}
+             <div>
+               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Ghi chú (Tùy chọn)</label>
+               <textarea
+                  value={note}
+                  onChange={e => setNote(e.target.value)}
+                  placeholder="Ví dụ: Làm ca sáng, hỗ trợ tiệc..."
+                  className="w-full border rounded-lg px-3 py-2 text-sm h-20 resize-none outline-none focus:ring-2 focus:ring-blue-500"
+               />
+             </div>
+          </div>
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-slate-100 flex justify-end">
+           <button
+              onClick={handleSaveShift}
+              disabled={loading}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold shadow-lg shadow-blue-200 flex items-center gap-2 active:scale-95 transition-all disabled:opacity-50"
+           >
+              {loading ? <Loader2 className="animate-spin"/> : <Save size={18}/>}
+              Lưu Lịch Làm Việc
+           </button>
+        </div>
+      </div>
+
+      {/* --- DANH SÁCH ĐÃ XẾP (Preview) --- */}
+      <div className="bg-white p-6 rounded-xl shadow border border-slate-200">
+         <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-slate-700">Lịch đã xếp ngày: {new Date(viewDate).toLocaleDateString('vi-VN')}</h3>
+            <input type="date" value={viewDate} onChange={e => setViewDate(e.target.value)} className="border rounded px-2 py-1 text-sm"/>
+         </div>
+
+         <div className="overflow-hidden rounded-lg border border-slate-200">
+            <table className="w-full text-sm text-left">
+               <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs">
+                  <tr>
+                     <th className="p-3">Nhân viên</th>
+                     <th className="p-3">Vị trí</th>
+                     <th className="p-3">Ghi chú</th>
+                     <th className="p-3 text-right">Hành động</th>
+                  </tr>
+               </thead>
+               <tbody className="divide-y divide-slate-50">
+                  {shifts.length === 0 ? (
+                     <tr><td colSpan="4" className="p-8 text-center text-slate-400 italic">Chưa có lịch làm việc cho ngày này</td></tr>
+                  ) : (
+                     shifts.map(s => {
+                        const u = users.find(user => user.id === s.user_id) || { name: 'Unknown' };
+                        const r = roles.find(role => role.code === s.role) || { name: s.role };
+                        return (
+                           <tr key={s.id} className="hover:bg-slate-50">
+                              <td className="p-3 font-bold text-slate-700">{u.name}</td>
+                              <td className="p-3"><span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold">{r.name}</span></td>
+                              <td className="p-3 text-slate-500 italic">{s.note || '-'}</td>
+                              <td className="p-3 text-right">
+                                 <button onClick={() => handleDeleteShift(s.id)} className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
+                              </td>
+                           </tr>
+                        )
+                     })
+                  )}
+               </tbody>
+            </table>
+         </div>
+      </div>
+    </div>
+  );
 };
 // --- ADMIN DASHBOARD ---
 const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
@@ -1124,7 +1297,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
       {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} users={users} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
-      {tab === 'shifts' && <AdminShiftScheduling users={users} roles={roles} setNotify={setNotify} />}
+      {tab === 'shifts' && <AdminShiftScheduler users={users} roles={roles} setNotify={setNotify} />}
       {tab === 'roles' && <AdminRoleManager roles={roles} allTasks={allTasks} onRefresh={onRefresh} setNotify={setNotify} />}
     </div>
   );
