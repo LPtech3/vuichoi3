@@ -661,6 +661,208 @@ const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }
   };
 
 // ==========================================
+// --- COMPONENT MỚI: LỊCH SỬ HOẠT ĐỘNG (BỘ LỌC NÂNG CAO) ---
+const AdminHistoryLog = ({ users, roles }) => {
+  // State quản lý bộ lọc
+  const [filterType, setFilterType] = useState('date'); // 'date' | 'month' | 'range'
+  const [dateRange, setDateRange] = useState({
+    start: new Date().toISOString().split('T')[0],
+    end: new Date().toISOString().split('T')[0]
+  });
+  const [filterRole, setFilterRole] = useState('');
+  const [filterUserId, setFilterUserId] = useState('');
+
+  // State dữ liệu
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Xử lý thay đổi loại lọc thời gian
+  const handleFilterTypeChange = (type) => {
+    setFilterType(type);
+    const today = new Date().toISOString().split('T')[0];
+    if (type === 'date') {
+      setDateRange({ start: today, end: today });
+    } else if (type === 'month') {
+      const d = new Date();
+      handleMonthChange(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    } else {
+      setDateRange({ start: today, end: today });
+    }
+  };
+
+  // Xử lý khi chọn tháng
+  const handleMonthChange = (monthStr) => {
+    if (!monthStr) return;
+    const [y, m] = monthStr.split('-');
+    const start = `${monthStr}-01`;
+    // Lấy ngày cuối tháng
+    const end = new Date(y, m, 0).toISOString().split('T')[0];
+    setDateRange({ start, end });
+  };
+
+  // Hàm tải dữ liệu
+  const fetchLogs = async () => {
+    setLoading(true);
+    try {
+      // 1. Query cơ bản vào bảng time_logs
+      // Lưu ý: Dùng !inner để lọc được theo bảng app_users nếu cần
+      let query = supabase
+        .from('time_logs')
+        .select('*, app_users!inner(name, role, username)')
+        .order('log_time', { ascending: false });
+
+      // 2. Áp dụng lọc thời gian
+      if (dateRange.start) query = query.gte('report_date', dateRange.start);
+      if (dateRange.end) query = query.lte('report_date', dateRange.end);
+
+      // 3. Áp dụng lọc nhân viên (nếu có chọn)
+      if (filterUserId) {
+        query = query.eq('user_id', filterUserId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // 4. Áp dụng lọc Khu vực (Role) ở phía Client (vì quan hệ N-N string khó lọc query chuẩn)
+      let result = data || [];
+      if (filterRole && !filterUserId) {
+        // Nếu chọn Role mà chưa chọn User -> lọc những log của user có role đó
+        result = result.filter(log => log.app_users?.role?.includes(filterRole));
+      }
+
+      setLogs(result);
+    } catch (err) {
+      console.error("Lỗi tải lịch sử:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Tự động tải khi thay đổi filter (có thể bỏ nếu muốn bấm nút mới tải)
+  useEffect(() => {
+    fetchLogs();
+  }, [dateRange, filterUserId, filterRole]); // Dependency: Chạy lại khi bộ lọc đổi
+
+  // Lọc danh sách user theo Role đã chọn (để hiển thị trong dropdown)
+  const filteredUsers = filterRole
+    ? users.filter(u => u.role.includes(filterRole))
+    : users;
+
+  return (
+    <div className="space-y-4">
+      {/* --- THANH BỘ LỌC --- */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-4">
+
+        {/* Dòng 1: Chọn kiểu thời gian */}
+        <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 pb-4">
+          <div className="flex gap-2 bg-slate-100 p-1 rounded-lg">
+            <button onClick={() => handleFilterTypeChange('date')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filterType === 'date' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Ngày</button>
+            <button onClick={() => handleFilterTypeChange('range')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filterType === 'range' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Khoảng</button>
+            <button onClick={() => handleFilterTypeChange('month')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${filterType === 'month' ? 'bg-white shadow text-blue-600' : 'text-slate-500'}`}>Tháng</button>
+          </div>
+
+          {/* Input Thời gian linh hoạt */}
+          <div className="flex items-center gap-2">
+             {filterType === 'date' && (
+               <input type="date" value={dateRange.start} onChange={e => setDateRange({start: e.target.value, end: e.target.value})} className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700"/>
+             )}
+             {filterType === 'month' && (
+               <input type="month" onChange={e => handleMonthChange(e.target.value)} defaultValue={dateRange.start.slice(0,7)} className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700"/>
+             )}
+             {filterType === 'range' && (
+               <div className="flex items-center gap-2">
+                 <input type="date" value={dateRange.start} onChange={e => setDateRange({...dateRange, start: e.target.value})} className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700"/>
+                 <span className="text-slate-400">-</span>
+                 <input type="date" value={dateRange.end} onChange={e => setDateRange({...dateRange, end: e.target.value})} className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700"/>
+               </div>
+             )}
+          </div>
+        </div>
+
+        {/* Dòng 2: Chọn Khu vực & Nhân viên */}
+        <div className="flex flex-wrap items-center gap-4">
+          {/* Lọc Role */}
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-slate-400"/>
+            <select value={filterRole} onChange={e => { setFilterRole(e.target.value); setFilterUserId(''); }} className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 min-w-[150px]">
+              <option value="">-- Tất cả Khu vực --</option>
+              {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
+            </select>
+          </div>
+
+          {/* Lọc User */}
+          <div className="flex items-center gap-2">
+            <Users size={16} className="text-slate-400"/>
+            <select value={filterUserId} onChange={e => setFilterUserId(e.target.value)} className="border rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 min-w-[150px]">
+              <option value="">-- Tất cả Nhân viên --</option>
+              {filteredUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+
+          <button onClick={fetchLogs} className="ml-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-500/30">
+            {loading ? <Loader2 className="animate-spin" size={16}/> : <RefreshCcw size={16}/>} Tải dữ liệu
+          </button>
+        </div>
+      </div>
+
+      {/* --- BẢNG KẾT QUẢ --- */}
+      <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+         <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase flex justify-between">
+            <span>Tìm thấy {logs.length} lượt hoạt động</span>
+            <span>{dateRange.start} <span className="mx-1">→</span> {dateRange.end}</span>
+         </div>
+         <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+                <tr>
+                  <th className="p-4">Thời gian</th>
+                  <th className="p-4">Nhân viên</th>
+                  <th className="p-4">Khu vực</th>
+                  <th className="p-4">Hành động</th>
+                  <th className="p-4">Hình ảnh</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {logs.length === 0 ? (
+                   <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">Không có dữ liệu nào trong khoảng thời gian này.</td></tr>
+                ) : logs.map(log => (
+                  <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="p-4">
+                       <div className="font-mono font-bold text-slate-700">{new Date(log.log_time).toLocaleTimeString('vi-VN')}</div>
+                       <div className="text-xs text-slate-400">{log.report_date}</div>
+                    </td>
+                    <td className="p-4 font-bold text-slate-700">{log.app_users?.name}</td>
+                    <td className="p-4">
+                       {/* Hiển thị các role của user này */}
+                       <div className="flex gap-1">
+                          {log.app_users?.role.split(',').map(r => (
+                             <span key={r} className="text-[10px] uppercase bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200">{r}</span>
+                          ))}
+                       </div>
+                    </td>
+                    <td className="p-4">
+                      {log.action_type === 'check_in' ? (
+                        <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold flex w-fit items-center gap-1 border border-emerald-200"><MapPin size={12}/> VÀO CA</span>
+                      ) : (
+                        <span className="bg-rose-100 text-rose-700 px-2 py-1 rounded text-xs font-bold flex w-fit items-center gap-1 border border-rose-200"><LogOut size={12}/> TAN CA</span>
+                      )}
+                    </td>
+                    <td className="p-4">
+                       {log.image_url ? (
+                         <a href={log.image_url} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded-lg overflow-hidden border border-slate-200 hover:scale-110 transition-transform">
+                            <img src={log.image_url} alt="check" className="w-full h-full object-cover"/>
+                         </a>
+                       ) : <span className="text-slate-300 text-xs">Không ảnh</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+         </div>
+      </div>
+    </div>
+  );
+};
 // MANAGER DASHBOARD
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
@@ -680,7 +882,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
          {/* Sử dụng component dành riêng cho Manager */}
          {tab === 'assign' && <ManagerTaskAssignment users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
          {/* Giữ lại AdminReports nhưng có thêm props users để lọc */}
-         {tab === 'monitor' && <AdminReports allTasks={allTasks} roles={roles} users={users} />}
+         {tab === 'monitor' && <AdminHistoryLog users={users} roles={roles} />}
       </div>
    );
 };
@@ -918,7 +1120,7 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
         <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
       </div>
       {tab === 'timesheet' && <AdminTimesheet users={users} />}
-      {tab === 'statistics' && <AdminStatistics users={users} roles={roles} allTasks={allTasks} />}
+      {tab === 'statistics' && <AdminStatistics users={users} />}
       {tab === 'reports' && <AdminReports allTasks={allTasks} roles={roles} users={users} />}
       {tab === 'users' && <AdminUserManager users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
       {tab === 'tasks' && <AdminTaskManager allTasks={allTasks} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
@@ -931,267 +1133,157 @@ const AdminDashboard = ({ users, roles, allTasks, initialReports, onRefresh, set
 // ==========================================
 // COMPONENT: THỐNG KÊ & TÍNH LƯƠNG (ĐÃ SỬA LỌC & ĐA VAI TRÒ)
 // ==========================================
-const AdminStatistics = ({ users, roles }) => {
-    // State thời gian và bộ lọc
-    const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
-    const [filterRole, setFilterRole] = useState(''); // Bộ lọc khu vực
-    const [loading, setLoading] = useState(false);
+// --- COMPONENT THỐNG KÊ LƯƠNG (GIAO DIỆN GIỐNG SAO1) ---
+const AdminStatistics = ({ users }) => {
+  const [statsData, setStatsData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [salaryConfig, setSalaryConfig] = useState({
+    baseShift: 200000, // Lương cơ bản 1 ca
+    perTask: 5000      // Thưởng task (tạm tính)
+  });
 
-    // State cấu hình lương (Nhập tay để tính nhanh)
-    const [salaryConfig, setSalaryConfig] = useState({
-        baseShift: 200000, // Lương 1 ca (ví dụ)
-        perTask: 5000      // Thưởng 1 task (ví dụ)
-    });
+  const fetchStats = async () => {
+    setLoading(true);
+    try {
+      // 1. Xác định ngày đầu và cuối tháng
+      const [year, month] = selectedMonth.split('-');
+      const startDate = `${selectedMonth}-01`;
+      const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
 
-    // State dữ liệu thống kê
-    const [statsData, setStatsData] = useState([]);
+      // 2. Lấy dữ liệu từ time_logs (Thay vì work_shifts bị lỗi)
+      const { data: timeLogs, error } = await supabase
+        .from('time_logs')
+        .select('user_id, report_date, action_type')
+        .gte('report_date', startDate)
+        .lte('report_date', endDate);
 
-    // Hàm lấy dữ liệu từ Supabase
-    useEffect(() => {
-        // --- HÀM fetchStats MỚI (SỬA LẠI TÊN BẢNG) ---
-    const fetchStats = async () => {
-      setLoading(true);
-      try {
-        // 1. Xác định thời gian
-        const [year, month] = selectedMonth.split('-');
-        const startDate = `${selectedMonth}-01`;
-        // Lấy ngày cuối tháng
-        const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
+      if (error) throw error;
 
-        // 2. Lấy dữ liệu CHẤM CÔNG từ bảng 'time_logs' (Thay vì work_shifts)
-        const { data: timeLogs, error: timeError } = await supabase
-          .from('time_logs')
-          .select('user_id, report_date, action_type')
-          .gte('report_date', startDate)
-          .lte('report_date', endDate);
-
-        if (timeError) throw timeError;
-
-        // Xử lý: Đếm số ngày làm việc (Unique theo ngày + User)
-        // Logic: Cứ có ít nhất 1 lần 'check_in' trong ngày thì tính là 1 công
-        const uniqueWorkDays = {};
-        if (timeLogs) {
-             timeLogs.forEach(log => {
-                if(log.action_type === 'check_in') {
-                    const key = `${log.user_id}_${log.report_date}`;
-                    uniqueWorkDays[key] = true; // Đánh dấu ngày này user này có đi làm
-                }
-             });
-        }
-
-        // Tổng hợp số công cho từng User ID
-        const countByUserId = {};
-        Object.keys(uniqueWorkDays).forEach(key => {
-            const [uid] = key.split('_');
-            countByUserId[uid] = (countByUserId[uid] || 0) + 1;
+      // 3. Tính số ngày làm việc (Unique theo ngày)
+      const workDaysMap = {};
+      if (timeLogs) {
+        timeLogs.forEach(log => {
+          if (log.action_type === 'check_in') {
+             const key = `${log.user_id}_${log.report_date}`;
+             // Đánh dấu user này đã đi làm ngày này
+             if (!workDaysMap[log.user_id]) workDaysMap[log.user_id] = new Set();
+             workDaysMap[log.user_id].add(log.report_date);
+          }
         });
+      }
 
-        // 3. Tổng hợp dữ liệu hiển thị ra bảng
-        // Lưu ý: Hiện tại Task lưu theo Role chung nên không đếm được chính xác task của từng user -> completedTasks tạm để 0
-        const aggregated = users
-          .filter(u => u.role !== 'admin')
-          .map(u => ({
+      // 4. Tổng hợp dữ liệu ra bảng
+      const aggregated = users
+        .filter(u => u.role !== 'admin') // Ẩn admin
+        .map(u => {
+          const days = workDaysMap[u.id] ? workDaysMap[u.id].size : 0;
+          const tasks = 0; // Tạm thời chưa tính task riêng
+          const total = (days * salaryConfig.baseShift) + (tasks * salaryConfig.perTask);
+
+          return {
             id: u.id,
             name: u.name,
-            username: u.username,
             role: u.role,
-            workDays: countByUserId[u.id] || 0, // Số ngày công thực tế lấy từ time_logs
-            completedTasks: 0,                  // Tạm thời chưa tính thưởng task cá nhân
-            totalSalary: 0                      // Sẽ được tính lại bởi useMemo bên dưới
-          }));
+            workDays: days,
+            completedTasks: tasks,
+            totalSalary: total
+          };
+        });
 
-        setStatsData(aggregated);
-      } catch (err) {
-        console.error("Lỗi fetch stats:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+      // Sắp xếp theo lương giảm dần
+      aggregated.sort((a, b) => b.totalSalary - a.totalSalary);
+      setStatsData(aggregated);
 
-        fetchStats();
-    }, [selectedMonth, users]); // Chạy lại khi đổi tháng hoặc danh sách user thay đổi
+    } catch (err) {
+      console.error("Lỗi thống kê:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    // Lọc dữ liệu hiển thị theo Khu vực (Filter Area)
-    const filteredStats = useMemo(() => {
-        let data = statsData;
-        if (filterRole) {
-            data = data.filter(item => item.role.includes(filterRole));
-        }
+  // Tự động tải khi đổi tháng
+  useEffect(() => {
+    fetchStats();
+  }, [selectedMonth]);
 
-        // Tính lương cho danh sách đã lọc
-        return data.map(item => ({
-            ...item,
-            totalSalary: (item.workDays * salaryConfig.baseShift) + (item.completedTasks * salaryConfig.perTask)
-        })).sort((a, b) => b.totalSalary - a.totalSalary); // Sắp xếp lương cao xuống thấp
-    }, [statsData, filterRole, salaryConfig]);
-
-    // Tính tổng quan cho các Cards
-    const totalPayout = filteredStats.reduce((sum, item) => sum + item.totalSalary, 0);
-    const totalTasks = filteredStats.reduce((sum, item) => sum + item.completedTasks, 0);
-    const totalShifts = filteredStats.reduce((sum, item) => sum + item.workDays, 0);
-
-    return (
-        <div className="space-y-6">
-            {/* THANH CÔNG CỤ: Chọn tháng, Lọc khu vực, Cấu hình lương */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-                    {/* Chọn tháng & Lọc khu vực */}
-                    <div className="flex flex-1 gap-4 w-full md:w-auto">
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tháng thống kê</label>
-                            <input
-                                type="month"
-                                className="border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-500"
-                                value={selectedMonth}
-                                onChange={e => setSelectedMonth(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex-1 md:flex-none md:w-64">
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Lọc theo Khu vực</label>
-                            <div className="relative">
-                                <Filter size={16} className="absolute left-3 top-2.5 text-slate-400"/>
-                                <select
-                                    className="w-full border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-sm font-semibold outline-none focus:border-blue-500 appearance-none bg-white"
-                                    value={filterRole}
-                                    onChange={e => setFilterRole(e.target.value)}
-                                >
-                                    <option value="">-- Tất cả khu vực --</option>
-                                    {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Cấu hình lương nhanh */}
-                    <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-100 w-full md:w-auto">
-                        <div>
-                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Lương/Ca</span>
-                            <input
-                                type="number"
-                                className="w-24 bg-white border rounded px-2 py-1 text-sm font-bold text-blue-600 outline-none"
-                                value={salaryConfig.baseShift}
-                                onChange={e => setSalaryConfig({...salaryConfig, baseShift: Number(e.target.value)})}
-                            />
-                        </div>
-                        <div className="text-slate-300">|</div>
-                        <div>
-                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Thưởng/Việc</span>
-                            <input
-                                type="number"
-                                className="w-24 bg-white border rounded px-2 py-1 text-sm font-bold text-green-600 outline-none"
-                                value={salaryConfig.perTask}
-                                onChange={e => setSalaryConfig({...salaryConfig, perTask: Number(e.target.value)})}
-                            />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* CARDS TỔNG QUAN */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 text-white shadow-lg shadow-blue-200">
-                    <div className="flex items-center gap-2 opacity-80 mb-1 text-xs font-bold uppercase">
-                        <Users size={16}/> Nhân sự hiển thị
-                    </div>
-                    <div className="text-3xl font-bold">{filteredStats.length}</div>
-                    <div className="text-xs opacity-70 mt-1">
-                        Tổng {totalShifts} ca làm việc
-                    </div>
-                </div>
-
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-slate-400 mb-1 text-xs font-bold uppercase">
-                        <ListTodo size={16}/> Tổng công việc hoàn thành
-                    </div>
-                    <div className="text-3xl font-bold text-slate-700">{totalTasks}</div>
-                    <div className="text-xs text-green-500 font-bold mt-1">
-                        +{(totalTasks * salaryConfig.perTask).toLocaleString('vi-VN')}đ tiền thưởng
-                    </div>
-                </div>
-
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-slate-400 mb-1 text-xs font-bold uppercase">
-                        <DollarSign size={16}/> Tổng quỹ lương ước tính
-                    </div>
-                    <div className="text-3xl font-bold text-slate-800">
-                        {totalPayout.toLocaleString('vi-VN')} <span className="text-sm font-normal text-slate-500">vnđ</span>
-                    </div>
-                    <div className="text-xs text-slate-400 mt-1">
-                        Đã bao gồm lương cứng + thưởng
-                    </div>
-                </div>
-            </div>
-
-            {/* BẢNG CHI TIẾT */}
-            <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-                <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                    <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                        <BarChart3 size={18} className="text-blue-500"/>
-                        Bảng Lương Chi Tiết
-                        {filterRole && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded ml-2">{roles.find(r=>r.code===filterRole)?.name}</span>}
-                    </h3>
-                </div>
-
-                {loading ? (
-                    <div className="p-10 text-center text-slate-400 flex flex-col items-center">
-                        <Loader2 className="animate-spin mb-2" size={24}/>
-                        Đang tính toán số liệu...
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b border-slate-100">
-                                <tr>
-                                    <th className="p-4">Nhân viên</th>
-                                    <th className="p-4 text-center">Số ca / Ngày làm</th>
-                                    <th className="p-4 text-center">Việc hoàn thành</th>
-                                    <th className="p-4 text-right">Lương ước tính</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                                {filteredStats.length === 0 ? (
-                                    <tr><td colSpan="4" className="p-6 text-center text-slate-400">Không có dữ liệu cho lựa chọn này.</td></tr>
-                                ) : (
-                                    filteredStats.map((s, idx) => (
-                                        <tr key={s.id} className="hover:bg-slate-50">
-                                            <td className="p-4">
-                                                <div className="font-bold text-slate-700 flex items-center gap-2">
-                                                    <span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-xs text-slate-600">{idx + 1}</span>
-                                                    {s.name}
-                                                </div>
-                                                <div className="text-xs text-slate-400 ml-8 mt-0.5">
-                                                    {s.role.split(',').map(r => {
-                                                         const rName = roles.find(Role => Role.code === r.trim())?.name || r;
-                                                         return rName;
-                                                    }).join(' • ')}
-                                                </div>
-                                            </td>
-                                            <td className="p-4 text-center">
-                                                <div className="font-bold text-slate-700">{s.workDays}</div>
-                                                <div className="text-[10px] text-slate-400">ca làm việc</div>
-                                            </td>
-                                            <td className="p-4 text-center">
-                                                <div className="font-bold text-blue-600">{s.completedTasks}</div>
-                                                <div className="text-[10px] text-slate-400">đầu việc</div>
-                                            </td>
-                                            <td className="p-4 text-right">
-                                                <div className="font-bold text-emerald-600 text-base">
-                                                    {s.totalSalary.toLocaleString('vi-VN')} đ
-                                                </div>
-                                                <div className="text-[10px] text-slate-400">
-                                                    {(s.workDays * salaryConfig.baseShift).toLocaleString('vi-VN')} cứng + {(s.completedTasks * salaryConfig.perTask).toLocaleString('vi-VN')} thưởng
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
+  return (
+    <div className="space-y-6">
+      {/* Header chọn tháng */}
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div>
+           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+             <BarChart3 className="text-blue-600" /> Bảng Lương Chi Tiết
+           </h2>
+           <p className="text-slate-500 text-sm mt-1">Thống kê ngày công và thu nhập nhân viên</p>
         </div>
-    );
+
+        <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200">
+           <Calendar className="text-slate-400" size={20}/>
+           <input
+             type="month"
+             value={selectedMonth}
+             onChange={(e) => setSelectedMonth(e.target.value)}
+             className="bg-transparent font-bold text-slate-700 outline-none"
+           />
+           <div className="h-6 w-px bg-slate-300 mx-2"></div>
+           <button onClick={fetchStats} className="p-2 hover:bg-white hover:shadow rounded-lg transition-all text-blue-600">
+             {loading ? <Loader2 className="animate-spin" size={20}/> : <RefreshCcw size={20}/>}
+           </button>
+        </div>
+      </div>
+
+      {/* Bảng lương */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-bold tracking-wider">
+              <tr>
+                <th className="p-4 border-b">Nhân viên</th>
+                <th className="p-4 border-b">Chức vụ</th>
+                <th className="p-4 border-b text-center">Số công</th>
+                <th className="p-4 border-b text-center">Thưởng Task</th>
+                <th className="p-4 border-b text-right">Tổng Lương</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {statsData.map(stat => (
+                <tr key={stat.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="p-4 font-bold text-slate-700">{stat.name}</td>
+                  <td className="p-4">
+                    <span className="px-2 py-1 rounded-md bg-slate-100 text-slate-500 text-xs font-bold uppercase border border-slate-200">
+                      {stat.role}
+                    </span>
+                  </td>
+                  <td className="p-4 text-center">
+                    <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 rounded-full font-bold text-sm">
+                      {stat.workDays}
+                    </span>
+                  </td>
+                  <td className="p-4 text-center font-mono text-slate-600">
+                     {stat.completedTasks}
+                  </td>
+                  <td className="p-4 text-right">
+                    <div className="font-bold text-emerald-600 text-lg">
+                      {stat.totalSalary.toLocaleString('vi-VN')} đ
+                    </div>
+                    <div className="text-xs text-slate-400">Tạm tính</div>
+                  </td>
+                </tr>
+              ))}
+              {statsData.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="p-8 text-center text-slate-400 italic">
+                    Chưa có dữ liệu chấm công cho tháng này
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const AdminTimesheet = ({ users }) => {
