@@ -948,72 +948,65 @@ const AdminStatistics = ({ users, roles }) => {
 
     // Hàm lấy dữ liệu từ Supabase
     useEffect(() => {
-        const fetchStats = async () => {
-            setLoading(true);
-            try {
-                // 1. Xác định ngày đầu và cuối tháng
-                const [year, month] = selectedMonth.split('-');
-                const startDate = `${selectedMonth}-01`;
-                const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
+        // --- HÀM fetchStats MỚI (SỬA LẠI TÊN BẢNG) ---
+    const fetchStats = async () => {
+      setLoading(true);
+      try {
+        // 1. Xác định thời gian
+        const [year, month] = selectedMonth.split('-');
+        const startDate = `${selectedMonth}-01`;
+        // Lấy ngày cuối tháng
+        const endDate = new Date(year, month, 0).toISOString().slice(0, 10);
 
-                // 2. Lấy lịch sử công việc (Tasks) trong tháng
-                const { data: taskLogs, error: taskError } = await supabase
-                    .from('task_history') // Đảm bảo tên bảng đúng với CSDL của bạn (task_history hoặc task_logs)
-                    .select('user_id, status, created_at')
-                    .gte('created_at', startDate)
-                    .lte('created_at', endDate + 'T23:59:59');
+        // 2. Lấy dữ liệu CHẤM CÔNG từ bảng 'time_logs' (Thay vì work_shifts)
+        const { data: timeLogs, error: timeError } = await supabase
+          .from('time_logs')
+          .select('user_id, report_date, action_type')
+          .gte('report_date', startDate)
+          .lte('report_date', endDate);
 
-                if (taskError) throw taskError;
+        if (timeError) throw timeError;
 
-                // 3. Lấy lịch sử chấm công/ca làm (Shifts) trong tháng (nếu có bảng work_shifts)
-                // Nếu chưa có bảng này, ta tạm tính số ngày có làm việc dựa trên task logs
-                const { data: shiftLogs, error: shiftError } = await supabase
-                    .from('work_shifts')
-                    .select('user_id, shift_date')
-                    .gte('shift_date', startDate)
-                    .lte('shift_date', endDate);
+        // Xử lý: Đếm số ngày làm việc (Unique theo ngày + User)
+        // Logic: Cứ có ít nhất 1 lần 'check_in' trong ngày thì tính là 1 công
+        const uniqueWorkDays = {};
+        if (timeLogs) {
+             timeLogs.forEach(log => {
+                if(log.action_type === 'check_in') {
+                    const key = `${log.user_id}_${log.report_date}`;
+                    uniqueWorkDays[key] = true; // Đánh dấu ngày này user này có đi làm
+                }
+             });
+        }
 
-                // (Bỏ qua lỗi shiftError nếu chưa tạo bảng work_shifts, coi như mảng rỗng)
-                const shifts = shiftLogs || [];
+        // Tổng hợp số công cho từng User ID
+        const countByUserId = {};
+        Object.keys(uniqueWorkDays).forEach(key => {
+            const [uid] = key.split('_');
+            countByUserId[uid] = (countByUserId[uid] || 0) + 1;
+        });
 
-                // 4. Tổng hợp dữ liệu theo từng user
-                const aggregated = users
-                    .filter(u => u.role !== 'admin') // Không tính admin
-                    .map(u => {
-                        // Lọc task của user này
-                        const userTasks = taskLogs?.filter(t => t.user_id === u.id) || [];
-                        const completedTasks = userTasks.length;
+        // 3. Tổng hợp dữ liệu hiển thị ra bảng
+        // Lưu ý: Hiện tại Task lưu theo Role chung nên không đếm được chính xác task của từng user -> completedTasks tạm để 0
+        const aggregated = users
+          .filter(u => u.role !== 'admin')
+          .map(u => ({
+            id: u.id,
+            name: u.name,
+            username: u.username,
+            role: u.role,
+            workDays: countByUserId[u.id] || 0, // Số ngày công thực tế lấy từ time_logs
+            completedTasks: 0,                  // Tạm thời chưa tính thưởng task cá nhân
+            totalSalary: 0                      // Sẽ được tính lại bởi useMemo bên dưới
+          }));
 
-                        // Đếm số ca làm việc
-                        // Nếu có bảng work_shifts thì dùng, không thì đếm số ngày unique có làm task
-                        let workDays = 0;
-                        if (shifts.length > 0) {
-                            workDays = shifts.filter(s => s.user_id === u.id).length;
-                        } else {
-                            const uniqueDays = new Set(userTasks.map(t => t.created_at.slice(0, 10)));
-                            workDays = uniqueDays.size;
-                        }
-
-                        return {
-                            id: u.id,
-                            name: u.name,
-                            username: u.username,
-                            role: u.role,
-                            completedTasks,
-                            workDays,
-                            // Tính lương tạm tính
-                            totalSalary: 0 // Sẽ tính lại ở phần render dựa trên state salaryConfig
-                        };
-                    });
-
-                setStatsData(aggregated);
-
-            } catch (err) {
-                console.error("Lỗi tải thống kê:", err);
-            } finally {
-                setLoading(false);
-            }
-        };
+        setStatsData(aggregated);
+      } catch (err) {
+        console.error("Lỗi fetch stats:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
 
         fetchStats();
     }, [selectedMonth, users]); // Chạy lại khi đổi tháng hoặc danh sách user thay đổi
