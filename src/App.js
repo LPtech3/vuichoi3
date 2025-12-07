@@ -422,7 +422,7 @@ const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }
     // Switch role logic
     // TRONG StaffDashboard
     // Tìm dòng: const displayedTasks = tasks.filter(t => t.role === activeRole);
-    // Sửa thành:
+    // Sửa thành:n
     const displayedTasks = tasks.filter(t => t.role === activeRole && checkTaskVisibleToday(t));
     const reportData = checklistData[activeRole] || {};
 
