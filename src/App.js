@@ -2906,7 +2906,17 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
                 >
                   ADMIN
                 </button>
-
+                {/* 2. Nút Manager (BỔ SUNG LẠI NÚT NÀY) */}
+                <button
+                  onClick={() => toggleArrayItem('role', 'manager')}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
+                    formData.role.includes('manager')
+                      ? 'bg-orange-600 text-white border-orange-600 shadow-md'
+                      : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
+                  }`}
+                >
+                  MANAGER
+                </button>
                 {/* Các role động từ DB */}
                 {roles.map(r => (
                   <button
