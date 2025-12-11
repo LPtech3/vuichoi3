@@ -279,67 +279,79 @@ export default function App() {
 
   // ... (Giữ nguyên các phần khác)
 
-  const fetchAllDataManager = async () => {
-     // 1. QUAN TRỌNG: Nếu chưa có thông tin user thì dừng ngay, không chạy tiếp để tránh lỗi null
-     if (!user) return;
+const fetchAllDataManager = async () => {
+     if (!user) {
+         console.log("Chưa đăng nhập, bỏ qua fetchAllDataManager");
+         return;
+     }
+
+     console.log("--- BẮT ĐẦU TẢI DỮ LIỆU QUẢN LÝ ---");
+     console.log("User hiện tại:", user.username);
+     console.log("Quyền quản lý (Managed Roles):", user.managed_roles);
+     console.log("Nhân viên quản lý (Managed Users):", user.managed_users);
 
      try {
         const today = getTodayISO();
 
-        // --- 1. Lấy danh sách nhân viên (trừ admin) ---
-        const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
-        let finalUsers = uData || [];
+        // 1. Lấy Users
+        const { data: uData, error: uError } = await supabase.from('app_users').select('*').neq('role', 'admin');
+        if (uError) console.error("Lỗi tải users:", uError);
 
-        // --- 2. Lọc nhân viên nếu Manager bị giới hạn ---
-        // Dùng user?. để đảm bảo không lỗi nếu user bị null đột ngột
-        if (user?.managed_users && user.managed_users.trim() !== '') {
+        let finalUsers = uData || [];
+        console.log("Tổng users tải về:", finalUsers.length);
+
+        // Lọc Users
+        if (user.managed_users && user.managed_users.trim() !== '') {
             const allowedUserIds = user.managed_users.split(',').map(id => id.trim());
-            // Chỉ giữ lại nhân viên có ID nằm trong danh sách được cấp quyền
             finalUsers = finalUsers.filter(u => allowedUserIds.includes(u.id.toString()));
+            console.log("Users sau khi lọc:", finalUsers.length);
+        } else {
+            console.log("Không có giới hạn nhân viên (hoặc chuỗi rỗng), hiển thị tất cả.");
         }
         setUsersList(finalUsers);
 
-        // --- 3. Lấy danh sách chức vụ/khu vực ---
-        const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
-        let finalRoles = rData || [];
+        // 2. Lấy Roles (Khu vực)
+        const { data: rData, error: rError } = await supabase.from('job_roles').select('*');
+        if (rError) console.error("Lỗi tải roles:", rError);
 
-        // --- 4. Lọc khu vực nếu Manager bị giới hạn ---
-        if (user?.managed_roles && user.managed_roles.trim() !== '') {
+        let finalRoles = rData || [];
+        console.log("Tổng roles tải về:", finalRoles.length);
+
+        // Lọc Roles
+        if (user.managed_roles && user.managed_roles.trim() !== '') {
              const allowedRoleCodes = user.managed_roles.split(',').map(r => r.trim());
+             console.log("Các mã role được phép:", allowedRoleCodes);
+
              finalRoles = finalRoles.filter(r => allowedRoleCodes.includes(r.code));
+             console.log("Roles sau khi lọc:", finalRoles.length);
+        } else {
+             console.log("Không có giới hạn Role (hoặc chuỗi rỗng), hiển thị tất cả.");
         }
         setRolesList(finalRoles);
 
-        // --- 5. Tải task và báo cáo (Chỉ tải của các role được phép) ---
-        const allowedRoleCodes = finalRoles.map(r => r.code); // Lấy danh sách code đã lọc
+        // 3. Tải Task & Report dựa trên Role đã lọc
+        const allowedRoleCodes = finalRoles.map(r => r.code);
 
-        // Nếu không có role nào được phép xem thì không tải task/report để tránh lỗi query
         if (allowedRoleCodes.length > 0) {
-            const { data: tData } = await supabase
-                .from('task_definitions')
-                .select('*')
-                .in('role', allowedRoleCodes)
-                .order('time_label', { ascending: true });
+            const { data: tData } = await supabase.from('task_definitions')
+                .select('*').in('role', allowedRoleCodes).order('time_label', { ascending: true });
             setTasksConfig(tData || []);
 
-            const { data: repData } = await supabase
-                .from('checklist_logs')
-                .select('role, data')
-                .eq('report_date', today)
-                .in('role', allowedRoleCodes);
+            const { data: repData } = await supabase.from('checklist_logs')
+                .select('role, data').eq('report_date', today).in('role', allowedRoleCodes);
 
             const reportMap = {};
             if(repData) repData.forEach(r => reportMap[r.role] = r.data);
             setChecklistData(reportMap);
         } else {
-            // Nếu không được quyền xem khu vực nào thì set rỗng
+            console.warn("Cảnh báo: Không có role nào được hiển thị -> Không tải task/report.");
             setTasksConfig([]);
             setChecklistData({});
         }
 
      } catch (error) {
-        console.error("Lỗi fetchAllDataManager:", error);
-        showNotify(setNotification, "Lỗi tải dữ liệu quản lý: " + error.message, "error");
+        console.error("Lỗi CRASH trong fetchAllDataManager:", error);
+        showNotify(setNotification, "Lỗi tải dữ liệu: " + error.message, "error");
      }
   };
 
