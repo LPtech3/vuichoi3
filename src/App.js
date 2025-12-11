@@ -902,6 +902,7 @@ const AdminHistoryLog = ({ users, roles }) => {
     </div>
   );
 };
+
 // MANAGER DASHBOARD
 // ==========================================
 // --- MANAGER DASHBOARD (ĐÃ CẬP NHẬT) ---
@@ -1339,6 +1340,215 @@ const AdminShiftScheduler = ({ users, roles }) => {
             </table>
          </div>
       </div>
+    </div>
+  );
+};
+// --- COMPONENT: ADMIN SHIFT MANAGER (Quản lý/Sắp ca làm việc) ---
+// Thêm component này vào trước ManagerDashboard hoặc AdminDashboard
+const AdminShiftManager = ({ users, roles, setNotify }) => {
+  const [fromDate, setFromDate] = useState(getTodayISO());
+  const [toDate, setToDate] = useState(getTodayISO());
+  const [selectedDaysOfWeek, setSelectedDaysOfWeek] = useState([1, 2, 3, 4, 5]); // Mặc định T2-T6
+  const [selectedUser, setSelectedUser] = useState('');
+  const [selectedRoles, setSelectedRoles] = useState([]);
+  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [shifts, setShifts] = useState([]);
+
+  const daysOfWeek = [
+    { val: 1, label: 'T2' }, { val: 2, label: 'T3' }, { val: 3, label: 'T4' },
+    { val: 4, label: 'T5' }, { val: 5, label: 'T6' }, { val: 6, label: 'T7' }, { val: 0, label: 'CN' }
+  ];
+
+  // Fetch shifts logic
+  const fetchShifts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('work_shifts')
+        .select('*')
+        .gte('date', fromDate)
+        .lte('date', toDate)
+        .order('date');
+      if (error) throw error;
+      setShifts(data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchShifts();
+  }, [fromDate, toDate]);
+
+  const toggleDay = (dayVal) => {
+    setSelectedDaysOfWeek(prev => prev.includes(dayVal) ? prev.filter(d => d !== dayVal) : [...prev, dayVal]);
+  };
+
+  const toggleRole = (roleCode) => {
+    setSelectedRoles(prev => prev.includes(roleCode) ? prev.filter(r => r !== roleCode) : [...prev, roleCode]);
+  };
+
+  const handleSaveShift = async () => {
+    if (!selectedUser || selectedRoles.length === 0) {
+      setNotify("Vui lòng chọn Nhân viên và ít nhất 1 Khu vực!", "error");
+      return;
+    }
+    setLoading(true);
+    try {
+      const inserts = [];
+      let currentDate = new Date(fromDate);
+      const end = new Date(toDate);
+
+      while (currentDate <= end) {
+        const dayOfWeek = currentDate.getDay(); // 0-6
+        if (selectedDaysOfWeek.includes(dayOfWeek)) {
+          const dateStr = currentDate.toISOString().split('T')[0];
+          selectedRoles.forEach(roleCode => {
+            inserts.push({
+              user_id: parseInt(selectedUser),
+              role: roleCode,
+              date: dateStr,
+              shift_name: 'Ca làm việc',
+              note: note
+            });
+          });
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      if (inserts.length === 0) {
+        setNotify("Không có ngày nào phù hợp trong khoảng đã chọn.", "error");
+        setLoading(false);
+        return;
+      }
+
+      const { error } = await supabase.from('work_shifts').insert(inserts);
+      if (error) throw error;
+
+      setNotify(`Đã xếp thành công ${inserts.length} ca!`);
+      fetchShifts();
+      setNote('');
+    } catch (err) {
+      setNotify("Lỗi lưu ca (có thể trùng): " + err.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteShift = async (id) => {
+      if(!window.confirm("Xóa ca làm việc này?")) return;
+      const { error } = await supabase.from('work_shifts').delete().eq('id', id);
+      if (error) setNotify("Lỗi xóa: " + error.message, "error");
+      else {
+          setNotify("Đã xóa ca làm việc");
+          fetchShifts();
+      }
+  };
+
+  return (
+    <div className="space-y-6">
+        {/* FORM NHẬP LIỆU */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-2 gap-6">
+             {/* LEFT: Date, Day, User */}
+             <div className="space-y-4">
+                 <div className="grid grid-cols-2 gap-3">
+                     <div>
+                         <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Từ ngày</label>
+                         <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="w-full border rounded-lg p-2 text-sm font-bold text-slate-700"/>
+                     </div>
+                     <div>
+                         <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Đến ngày</label>
+                         <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="w-full border rounded-lg p-2 text-sm font-bold text-slate-700"/>
+                     </div>
+                 </div>
+
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Áp dụng thứ</label>
+                    <div className="flex gap-1.5 flex-wrap">
+                        {daysOfWeek.map(d => (
+                            <button key={d.val} onClick={() => toggleDay(d.val)} className={`w-8 h-8 rounded-full text-xs font-bold transition-all ${selectedDaysOfWeek.includes(d.val) ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-100 text-slate-400'}`}>
+                                {d.label}
+                            </button>
+                        ))}
+                    </div>
+                 </div>
+
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Nhân viên</label>
+                    <select value={selectedUser} onChange={e => setSelectedUser(e.target.value)} className="w-full border rounded-lg p-2 text-sm font-bold text-slate-700">
+                        <option value="">-- Chọn nhân viên --</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </select>
+                 </div>
+             </div>
+
+             {/* RIGHT: Role, Note, Save */}
+             <div className="space-y-4 flex flex-col">
+                 <div className="flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Khu vực / Công việc</label>
+                    <div className="flex flex-wrap gap-2">
+                        {roles.map(r => (
+                            <div key={r.code} onClick={() => toggleRole(r.code)} className={`cursor-pointer border px-3 py-2 rounded-lg flex items-center gap-2 text-xs font-bold transition-all ${selectedRoles.includes(r.code) ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                <div className={`w-4 h-4 rounded border flex items-center justify-center ${selectedRoles.includes(r.code) ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300'}`}>
+                                    {selectedRoles.includes(r.code) && <CheckSquare size={12} className="text-white"/>}
+                                </div>
+                                {r.name}
+                            </div>
+                        ))}
+                    </div>
+                 </div>
+
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Ghi chú (Tùy chọn)</label>
+                    <input type="text" value={note} onChange={e => setNote(e.target.value)} className="w-full border rounded-lg p-2 text-sm" placeholder="Ghi chú cho ca này..." />
+                 </div>
+
+                 <button onClick={handleSaveShift} disabled={loading} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2">
+                    {loading ? <Loader2 className="animate-spin" size={18}/> : <Plus size={18}/>}
+                    Lưu Lịch Làm Việc
+                 </button>
+             </div>
+        </div>
+
+        {/* LIST */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+             <div className="p-3 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase">
+                 Danh sách ca ({shifts.length})
+             </div>
+             <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-white text-slate-500 font-bold text-xs border-b">
+                        <tr>
+                            <th className="p-3">Ngày</th>
+                            <th className="p-3">Nhân viên</th>
+                            <th className="p-3">Khu vực</th>
+                            <th className="p-3">Ghi chú</th>
+                            <th className="p-3 text-right">#</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                        {shifts.map(s => {
+                            const u = users.find(x => x.id === s.user_id);
+                            const r = roles.find(x => x.code === s.role);
+                            return (
+                                <tr key={s.id} className="hover:bg-slate-50">
+                                    <td className="p-3 font-mono text-slate-600">{s.date.split('-').reverse().join('/')}</td>
+                                    <td className="p-3 font-bold text-slate-700">{u?.name || s.user_id}</td>
+                                    <td className="p-3"><span className="bg-blue-100 text-blue-600 px-2 py-1 rounded text-xs font-bold uppercase">{r?.name || s.role}</span></td>
+                                    <td className="p-3 text-slate-500 italic">{s.note}</td>
+                                    <td className="p-3 text-right">
+                                        <button onClick={() => handleDeleteShift(s.id)} className="text-red-500 p-2 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                        {shifts.length === 0 && (
+                            <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">Chưa có lịch nào trong khoảng này.</td></tr>
+                        )}
+                    </tbody>
+                </table>
+             </div>
+        </div>
     </div>
   );
 };
