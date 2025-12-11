@@ -167,6 +167,9 @@ const processImageInput = (file, maxSizeMB = 0.3) => {
 };
 
 // --- MAIN APP COMPONENT ---
+// ... (Giữ nguyên phần Imports và Utils ở trên)
+
+// --- MAIN APP COMPONENT ---
 export default function App() {
   const [user, setUser] = useState(null);
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
@@ -183,6 +186,11 @@ export default function App() {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [showChangePass, setShowChangePass] = useState(false);
 
+  // --- STATE MỚI: CHẾ ĐỘ QUẢN LÝ ---
+  // false: Xem checklist chấm công (mặc định)
+  // true: Xem dashboard quản lý
+  const [isManagerMode, setManagerMode] = useState(false);
+
   const handleLogin = async () => {
     setLoading(true);
     try {
@@ -196,12 +204,16 @@ export default function App() {
       if (error || !data) throw new Error("Sai thông tin đăng nhập");
 
       setUser(data);
+
+      // Reset chế độ manager mỗi khi đăng nhập lại
+      setManagerMode(false);
+
       if (data.role === 'admin') {
          fetchAllDataAdmin();
       } else if (data.role.includes('manager')) {
+         // Manager vẫn load đủ data để khi chuyển mode không cần load lại
          fetchAllDataManager();
       } else {
-         // Staff: Role có thể là "bep,phucvu" -> Cần fetch tất cả task của các role này
          fetchTasksConfig(data.role);
          fetchTodayReport(data.role);
       }
@@ -228,7 +240,6 @@ export default function App() {
   }
 
   const fetchTasksConfig = async (roleString) => {
-    // roleString có thể là "bep,bar". Cần split ra
     const roles = roleString.split(',').map(r => r.trim());
     const { data } = await supabase.from('task_definitions').select('*').in('role', roles).order('time_label', { ascending: true });
     if(data) setTasksConfig(data);
@@ -237,7 +248,6 @@ export default function App() {
   const fetchTodayReport = async (roleString) => {
     const today = getTodayISO();
     const roles = roleString.split(',').map(r => r.trim());
-    // Fetch logs cho tất cả role mà user đảm nhận
     const { data } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today).in('role', roles);
 
     const combinedData = {};
@@ -270,7 +280,6 @@ export default function App() {
   const fetchAllDataManager = async () => {
      try {
         const today = getTodayISO();
-        // Manager thấy mọi user trừ admin
         const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
         setUsersList(uData || []);
         const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
@@ -288,7 +297,6 @@ export default function App() {
 
   if (!user) return <ModernLogin loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} loading={loading} />;
 
-  // Xử lý Role hiển thị trên UI
   const displayRole = user.role === 'admin' ? 'Quản Trị Viên' : (user.role.includes('manager') ? 'Quản Lý' : 'Nhân Viên');
 
   return (
@@ -316,6 +324,7 @@ export default function App() {
 
       <div className="flex flex-col lg:flex-row min-h-screen">
         <aside className="lg:w-72 bg-white border-r border-slate-200 lg:h-screen lg:sticky lg:top-0 z-40 flex flex-col">
+          {/* --- SIDEBAR HEADER --- */}
           <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-lg shadow-lg">
@@ -328,10 +337,25 @@ export default function App() {
                 </span>
               </div>
             </div>
-            <button className="lg:hidden p-2 text-slate-500" onClick={() => setSidebarOpen(!isSidebarOpen)}>
-              {isSidebarOpen ? <X /> : <Menu />}
-            </button>
+
+            <div className="flex items-center gap-2">
+                {/* --- NÚT BÁNH RĂNG (CHỈ HIỆN CHO MANAGER) --- */}
+                {user.role.includes('manager') && (
+                    <button
+                        onClick={() => setManagerMode(!isManagerMode)}
+                        className={`p-2 rounded-lg transition-all ${isManagerMode ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-100 hover:text-blue-600'}`}
+                        title="Chuyển chế độ Quản lý / Chấm công"
+                    >
+                        <Settings size={20} />
+                    </button>
+                )}
+
+                <button className="lg:hidden p-2 text-slate-500" onClick={() => setSidebarOpen(!isSidebarOpen)}>
+                  {isSidebarOpen ? <X /> : <Menu />}
+                </button>
+            </div>
           </div>
+
           <div className={`absolute lg:static w-full bg-white border-b lg:border-none border-slate-200 p-4 transition-all duration-300 z-30 ${isSidebarOpen ? 'top-20 opacity-100 visible shadow-xl' : 'top-[-400px] opacity-0 invisible lg:opacity-100 lg:visible'}`}>
              <div className="mt-4 space-y-2">
                 <button onClick={() => setShowChangePass(true)} className="w-full flex items-center gap-3 p-3 rounded-xl text-slate-600 hover:bg-slate-50 transition-all font-medium">
@@ -348,7 +372,9 @@ export default function App() {
 
         <main className="flex-1 bg-slate-50/50 p-4 lg:p-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto">
+            {/* --- LOGIC HIỂN THỊ DASHBOARD --- */}
             {user.role === 'admin' ? (
+              // Admin: Luôn hiện AdminDashboard
               <AdminDashboard
                 users={usersList}
                 roles={rolesList}
@@ -357,7 +383,8 @@ export default function App() {
                 onRefresh={fetchAllDataAdmin}
                 setNotify={(m, t) => showNotify(setNotification, m, t)}
               />
-            ) : user.role.includes('manager') ? (
+            ) : (user.role.includes('manager') && isManagerMode) ? (
+              // Manager + Đang bật chế độ Manager: Hiện Dashboard Quản lý
               <ManagerDashboard
                  users={usersList}
                  roles={rolesList}
@@ -367,6 +394,7 @@ export default function App() {
                  setNotify={(m, t) => showNotify(setNotification, m, t)}
               />
             ) : (
+              // Mặc định (Staff hoặc Manager tắt chế độ quản lý): Hiện Checklist chấm công
               <StaffDashboard
                 user={user}
                 tasks={tasksConfig}
@@ -381,6 +409,7 @@ export default function App() {
     </div>
   );
 }
+// ... (Các component con bên dưới giữ nguyên)
 
 // ==========================================
 // LOGIN COMPONENT
