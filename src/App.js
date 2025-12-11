@@ -7,7 +7,7 @@ import {
   Users, ListTodo, Image as ImageIcon, MapPin, Briefcase,
   CalendarClock, AlertTriangle, AlertCircle,
   Edit3, Copy, Key, Save, XCircle, BarChart3, TrendingUp, DollarSign, Calendar, Filter, ChevronRight,
-  Eye, EyeOff, UserCog, Layers, CheckSquare
+  Eye, EyeOff, UserCog, Layers, CheckSquare, Settings // <--- Thêm vào đây
 } from 'lucide-react';
 
 // --- STYLES ---
