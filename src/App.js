@@ -2326,13 +2326,79 @@ const AdminReports = ({ allTasks, roles, users }) => {
 // --- ADMIN USER LIST (CẬP NHẬT: THÊM FORM PHÂN QUYỀN MANAGER) ---
 // --- ADMIN USER LIST (Cập nhật lại để hiện ô Phân quyền) ---
 // --- ADMIN USER LIST (PHIÊN BẢN FIX LỖI HIỂN THỊ) ---
+// --- COMPONENT MỚI: DROPDOWN CHỌN NHIỀU (Đặt component này bên trên AdminUserList) ---
+const MultiSelectDropdown = ({ label, options, selected, onChange, placeholder = "-- Chọn --" }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const wrapperRef = useRef(null);
+
+  // Đóng dropdown khi click ra ngoài
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [wrapperRef]);
+
+  const toggleOption = (val) => {
+    const newSelected = selected.includes(val)
+      ? selected.filter(item => item !== val) // Bỏ chọn
+      : [...selected, val]; // Chọn thêm
+    onChange(newSelected);
+  };
+
+  return (
+    <div className="relative" ref={wrapperRef}>
+      <label className="block text-xs font-bold text-slate-500 uppercase mb-1">{label}</label>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full text-left border rounded-lg p-2.5 text-sm bg-white flex justify-between items-center shadow-sm hover:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+      >
+        <span className={`truncate ${selected.length ? 'text-blue-700 font-bold' : 'text-slate-400'}`}>
+          {selected.length > 0 ? `Đã chọn ${selected.length} mục` : placeholder}
+        </span>
+        <ChevronRight size={16} className={`text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto p-2 space-y-1 animate-in fade-in zoom-in-95 duration-200">
+          {options.length > 0 ? (
+            options.map(opt => (
+              <div
+                key={opt.value}
+                onClick={() => toggleOption(opt.value)}
+                className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${selected.includes(opt.value) ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${selected.includes(opt.value) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
+                  {selected.includes(opt.value) && <CheckSquare size={14} className="text-white" />}
+                </div>
+                <span className="text-sm font-medium">{opt.label}</span>
+              </div>
+            ))
+          ) : (
+            <div className="text-center text-xs text-slate-400 py-2">Không có dữ liệu</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- CẬP NHẬT: ADMIN USER LIST ---
 const AdminUserList = ({ users, roles, onRefresh, setNotify }) => {
   const [editingUser, setEditingUser] = useState(null);
 
-  // Khởi tạo state
+  // State form
   const [formData, setFormData] = useState({
-      username: '', password: '', name: '', role: 'staff',
-      managed_roles: [], managed_users: []
+    username: '',
+    password: '',
+    name: '',
+    role: 'staff',
+    managed_roles: [], // Lưu dưới dạng mảng []
+    managed_users: []  // Lưu dưới dạng mảng []
   });
 
   const [showPass, setShowPass] = useState(false);
@@ -2346,40 +2412,41 @@ const AdminUserList = ({ users, roles, onRefresh, setNotify }) => {
         password: editingUser.password,
         name: editingUser.name,
         role: editingUser.role || 'staff',
-        // Xử lý an toàn cho mảng
-        managed_roles: editingUser.managed_roles ? editingUser.managed_roles.split(',').filter(x=>x) : [],
-        managed_users: editingUser.managed_users ? editingUser.managed_users.split(',').filter(x=>x) : []
+        // Chuyển chuỗi CSV từ DB thành mảng để dùng trong MultiSelect
+        managed_roles: editingUser.managed_roles ? editingUser.managed_roles.split(',').filter(x => x) : [],
+        managed_users: editingUser.managed_users ? editingUser.managed_users.split(',').filter(x => x) : []
       });
     } else {
       setFormData({ username: '', password: '', name: '', role: 'staff', managed_roles: [], managed_users: [] });
     }
   }, [editingUser]);
 
-  // --- LOGIC QUAN TRỌNG: Kiểm tra xem có hiện ô phân quyền không ---
-  // Chuyển về chữ thường để so sánh (tránh lỗi Manager vs manager)
-  const isManager = formData.role && formData.role.toLowerCase().includes('manager');
+  // Kiểm tra role để hiện form Manager (Sửa lại logic so sánh)
+  const isManager = formData.role === 'manager';
 
   const handleSave = async () => {
     if (!formData.username || !formData.password || !formData.name) return setNotify("Vui lòng nhập đủ thông tin!", "error");
 
+    // Chuẩn bị dữ liệu gửi đi (Chuyển mảng về chuỗi CSV)
     const submitData = {
       username: formData.username,
       password: formData.password,
       name: formData.name,
       role: formData.role,
-      managed_roles: formData.managed_roles.join(','),
-      managed_users: formData.managed_users.join(',')
+      // Nếu là manager thì lưu chuỗi, nếu không thì null
+      managed_roles: isManager ? formData.managed_roles.join(',') : null,
+      managed_users: isManager ? formData.managed_users.join(',') : null
     };
 
     try {
       if (editingUser) {
         const { error } = await supabase.from('app_users').update(submitData).eq('id', editingUser.id);
         if (error) throw error;
-        setNotify("Đã cập nhật nhân viên");
+        setNotify("Đã cập nhật nhân sự!");
       } else {
-        const { error } = await supabase.from('app_users').insert(submitData);
+        const { error } = await supabase.from('app_users').insert([submitData]);
         if (error) throw error;
-        setNotify("Đã thêm nhân viên mới");
+        setNotify("Đã thêm nhân sự mới!");
       }
       setEditingUser(null);
       onRefresh();
@@ -2388,136 +2455,159 @@ const AdminUserList = ({ users, roles, onRefresh, setNotify }) => {
     }
   };
 
-  const toggleItem = (listName, itemValue) => {
-    setFormData(prev => {
-      const currentList = prev[listName] || [];
-      const valStr = itemValue.toString();
-      if (currentList.includes(valStr)) return { ...prev, [listName]: currentList.filter(i => i !== valStr) };
-      return { ...prev, [listName]: [...currentList, valStr] };
-    });
-  };
-
   const handleDelete = async (id) => {
-    if (window.confirm("Xóa nhân viên này?")) {
-      await supabase.from('app_users').delete().eq('id', id);
+    if (!window.confirm("Bạn có chắc chắn muốn xóa?")) return;
+    try {
+      const { error } = await supabase.from('app_users').delete().eq('id', id);
+      if (error) throw error;
+      setNotify("Đã xóa nhân sự!");
       onRefresh();
+    } catch (err) {
+      setNotify("Lỗi xóa: " + err.message, "error");
     }
   };
 
-  const filteredUsers = filterRole ? users.filter(u => u.role.includes(filterRole)) : users;
+  // Tạo danh sách options cho dropdown
+  const roleOptions = roles.map(r => ({ value: r.code, label: r.name }));
+  // Lọc danh sách user để chọn (trừ admin ra cho gọn)
+  const userOptions = users
+    .filter(u => u.role !== 'admin' && u.id !== editingUser?.id) // Không chọn chính mình
+    .map(u => ({ value: u.id.toString(), label: `${u.name} (${u.role})` }));
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* CỘT TRÁI: FORM */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 h-fit sticky top-4 shadow-sm">
+      <div className="bg-white p-5 rounded-xl border border-slate-200 h-fit sticky top-4 shadow-sm z-10">
         <h3 className="font-bold text-lg text-slate-800 mb-4">{editingUser ? 'Sửa Thông Tin' : 'Thêm Nhân Sự'}</h3>
-
         <div className="space-y-4">
-           <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Họ và tên</label>
-              <input className="w-full border rounded-lg p-2.5 text-sm" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-           </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Họ và tên</label>
+            <input className="w-full border rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} placeholder="VD: Nguyễn Văn A" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tên đăng nhập</label>
+            <input className="w-full border rounded-lg p-2.5 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none" value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })} placeholder="user123" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Mật khẩu</label>
+            <div className="relative">
+              <input type={showPass ? "text" : "password"} className="w-full border rounded-lg p-2.5 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none pr-10" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+              <button onClick={() => setShowPass(!showPass)} className="absolute right-2 top-2.5 text-slate-400 hover:text-blue-600">
+                {showPass ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Vai trò hệ thống</label>
+            <select
+              className="w-full border rounded-lg p-2.5 text-sm font-bold bg-slate-50 text-blue-700 focus:ring-2 focus:ring-blue-500 outline-none"
+              value={formData.role}
+              onChange={e => setFormData({ ...formData, role: e.target.value })}
+            >
+              <option value="staff">Nhân viên (Staff)</option>
+              <option value="manager">Quản lý (Manager)</option>
+              <option value="admin">Quản trị viên (Admin)</option>
+            </select>
+          </div>
 
-           <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Vai trò hệ thống</label>
-              <select className="w-full border rounded-lg p-2.5 text-sm font-bold bg-slate-50 text-blue-700" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
-                  <option value="staff">Nhân viên (Staff)</option>
-                  <option value="manager">Quản lý (Manager)</option>
-                  <option value="admin">Quản trị viên (Admin)</option>
-              </select>
-           </div>
+          {/* --- KHUNG PHÂN QUYỀN (HIỆN NẾU LÀ MANAGER) --- */}
+          {isManager && (
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-4 relative animate-in slide-in-from-top-2">
+              <div className="absolute -top-2 left-8 w-4 h-4 bg-blue-50 border-t border-l border-blue-200 transform rotate-45"></div>
 
-           {/* --- KHUNG PHÂN QUYỀN (HIỆN NẾU LÀ MANAGER) --- */}
-           {isManager && (
-             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200 space-y-3 relative">
-               {/* Mũi tên chỉ lên */}
-               <div className="absolute -top-2 left-8 w-3 h-3 bg-blue-50 border-t border-l border-blue-200 transform rotate-45"></div>
+              <p className="text-xs font-bold text-blue-700 uppercase flex items-center gap-2">
+                <ShieldCheck size={16} /> Cấu hình quyền Quản lý
+              </p>
 
-               <p className="text-xs font-bold text-blue-700 uppercase flex items-center gap-2">
-                 <ShieldCheck size={16}/> Cấu hình quyền Quản lý
-               </p>
+              {/* 1. Chọn Khu vực (MultiSelect) */}
+              <MultiSelectDropdown
+                label="Quản lý khu vực (Managed Roles)"
+                options={roleOptions}
+                selected={formData.managed_roles}
+                onChange={(newRoles) => setFormData({ ...formData, managed_roles: newRoles })}
+                placeholder="-- Chọn khu vực --"
+              />
 
-               {/* 1. Chọn Khu vực */}
-               <div className="bg-white p-2 rounded border border-blue-100">
-                 <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Được quản lý khu vực:</p>
-                 <div className="max-h-32 overflow-y-auto space-y-1">
-                   {(!roles || roles.length === 0) && <div className="text-xs text-red-400 italic">Chưa có dữ liệu Khu vực (Roles)</div>}
-                   {(roles || []).map(r => (
-                     <label key={r.code} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-slate-50 p-1">
-                       <input type="checkbox" checked={formData.managed_roles.includes(r.code)} onChange={() => toggleItem('managed_roles', r.code)} />
-                       <span>{r.name}</span>
-                     </label>
-                   ))}
-                 </div>
-               </div>
+              {/* 2. Chọn Nhân viên (MultiSelect) */}
+              <MultiSelectDropdown
+                label="Quản lý nhân viên (Managed Users)"
+                options={userOptions}
+                selected={formData.managed_users}
+                onChange={(newUsers) => setFormData({ ...formData, managed_users: newUsers })}
+                placeholder="-- Chọn nhân viên --"
+              />
 
-               {/* 2. Chọn Nhân viên */}
-               <div className="bg-white p-2 rounded border border-blue-100">
-                 <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Được quản lý nhân viên:</p>
-                 <div className="max-h-32 overflow-y-auto space-y-1">
-                    {users.filter(u => u.id !== editingUser?.id && !u.role.includes('admin')).map(u => (
-                     <label key={u.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-slate-50 p-1">
-                       <input type="checkbox" checked={formData.managed_users.includes(u.id.toString())} onChange={() => toggleItem('managed_users', u.id)} />
-                       <span>{u.name}</span>
-                     </label>
-                   ))}
-                 </div>
-               </div>
-             </div>
-           )}
+              <p className="text-[10px] text-blue-600 italic">
+                * Manager chỉ có thể xem báo cáo và chấm công của các Khu vực và Nhân viên được chọn ở trên.
+              </p>
+            </div>
+          )}
 
-           <div className="grid grid-cols-2 gap-2">
-             <input className="border rounded-lg p-2.5 text-sm" placeholder="Username" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} />
-             <input className="border rounded-lg p-2.5 text-sm" type={showPass ? 'text' : 'password'} placeholder="Password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
-           </div>
-
-           <div className="flex gap-2 pt-2">
-              {editingUser && <button onClick={() => setEditingUser(null)} className="flex-1 bg-slate-100 py-2 rounded-lg font-bold">Hủy</button>}
-              <button onClick={handleSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold hover:bg-blue-700">Lưu</button>
-           </div>
+          <div className="pt-2 flex gap-2">
+            {editingUser && (
+              <button onClick={() => setEditingUser(null)} className="flex-1 py-2.5 border border-slate-300 rounded-lg font-bold text-slate-600 hover:bg-slate-50 transition-all">
+                Hủy
+              </button>
+            )}
+            <button onClick={handleSave} className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-all flex justify-center items-center gap-2">
+              <Save size={18} /> {editingUser ? 'Lưu Thay Đổi' : 'Tạo Mới'}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* CỘT PHẢI: DANH SÁCH */}
-      <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-             <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
-                <span className="font-bold text-slate-700">Danh sách nhân sự</span>
-                <div className="flex gap-1">
-                   {['', 'manager', 'staff'].map(r => (
-                       <button key={r} onClick={() => setFilterRole(r)} className={`px-3 py-1 text-xs rounded-lg font-bold capitalize transition-all ${filterRole===r ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 text-slate-500'}`}>
-                           {r || 'Tất cả'}
-                       </button>
-                   ))}
-                </div>
-             </div>
-             <table className="w-full text-sm text-left">
-                <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b">
-                   <tr><th className="p-4">Tên</th><th className="p-4">Vai trò</th><th className="p-4 text-right">#</th></tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                   {filteredUsers.map(u => (
-                      <tr key={u.id} className="hover:bg-slate-50 group">
-                         <td className="p-4 font-bold text-slate-700">
-                             {u.name} <div className="text-xs text-slate-400 font-normal">{u.username}</div>
-                         </td>
-                         <td className="p-4">
-                            <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${u.role.includes('admin')?'bg-purple-100 text-purple-600':u.role.includes('manager')?'bg-orange-100 text-orange-600':'bg-slate-100 text-slate-500'}`}>{u.role}</span>
-                            {/* Hiển thị quyền Manager */}
-                            {u.role.toLowerCase().includes('manager') && (
-                                <div className="mt-1 text-[10px] text-slate-400">
-                                    QL: {u.managed_roles || '-'} <br/>
-                                    NV: {u.managed_users ? u.managed_users.split(',').length : 0}
-                                </div>
-                            )}
-                         </td>
-                         <td className="p-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => setEditingUser(u)} className="text-blue-600 p-2"><Edit3 size={16}/></button>
-                            <button onClick={() => handleDelete(u.id)} className="text-red-600 p-2 ml-1"><Trash2 size={16}/></button>
-                         </td>
-                      </tr>
-                   ))}
-                </tbody>
-             </table>
+      <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full min-h-[500px]">
+        {/* (Giữ nguyên phần bảng danh sách nhân sự như cũ) */}
+        <div className="p-4 border-b bg-slate-50 flex justify-between items-center">
+          <span className="font-bold text-slate-700">Danh sách nhân sự ({users.length})</span>
+          <div className="flex gap-1">
+            {['', 'manager', 'staff'].map(r => (
+              <button key={r} onClick={() => setFilterRole(r)} className={`px-3 py-1 text-xs rounded-lg font-bold capitalize transition-all ${filterRole === r ? 'bg-blue-600 text-white shadow' : 'hover:bg-slate-200 text-slate-500'}`}>
+                {r || 'Tất cả'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="overflow-x-auto flex-1">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-white text-slate-500 uppercase font-bold text-xs border-b sticky top-0 z-10">
+              <tr>
+                <th className="p-4 bg-slate-50">Tên</th>
+                <th className="p-4 bg-slate-50">Vai trò</th>
+                <th className="p-4 bg-slate-50 text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {users
+                .filter(u => !filterRole || u.role === filterRole)
+                .map(u => (
+                  <tr key={u.id} className="hover:bg-blue-50/50 transition-colors group">
+                    <td className="p-4">
+                      <div className="font-bold text-slate-700">{u.name}</div>
+                      <div className="text-xs text-slate-400 font-mono">{u.username}</div>
+                    </td>
+                    <td className="p-4">
+                       <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${u.role === 'admin' ? 'bg-purple-100 text-purple-600' : (u.role.includes('manager') ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500')}`}>
+                          {u.role}
+                       </span>
+                       {u.role === 'manager' && (
+                         <div className="mt-1 text-[10px] text-slate-400 max-w-[150px] truncate">
+                           QL: {u.managed_roles ? u.managed_roles.split(',').length : 0} khu vực, {u.managed_users ? u.managed_users.split(',').length : 0} nv
+                         </div>
+                       )}
+                    </td>
+                    <td className="p-4 text-right">
+                      <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                         <button onClick={() => setEditingUser(u)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg"><Edit3 size={16} /></button>
+                         <button onClick={() => handleDelete(u.id)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg"><Trash2 size={16} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
