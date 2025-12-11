@@ -946,11 +946,12 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
         ) : (
           // Tab 2: Sắp ca (Sử dụng lại component của Admin)
           // Lưu ý: Đảm bảo tên component bên dưới khớp với tên component sắp ca trong file của bạn (thường là AdminShiftManager)
-          <AdminShiftManager
-             users={users}
-             roles={roles}
-             setNotify={setNotify} // Truyền thêm setNotify nếu AdminShiftManager cần dùng
-          />
+          // Tab 2: Sắp ca (Sử dụng lại component của Admin)
+            <AdminShiftScheduler
+                 users={users}
+                 roles={roles}
+                 setNotify={setNotify}
+             />
         )}
       </div>
     </div>
