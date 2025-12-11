@@ -277,85 +277,23 @@ export default function App() {
     }
   };
 
-  // ... (Giữ nguyên các phần khác)
-
-const fetchAllDataManager = async () => {
-     if (!user) {
-         console.log("Chưa đăng nhập, bỏ qua fetchAllDataManager");
-         return;
-     }
-
-     console.log("--- BẮT ĐẦU TẢI DỮ LIỆU QUẢN LÝ ---");
-     console.log("User hiện tại:", user.username);
-     console.log("Quyền quản lý (Managed Roles):", user.managed_roles);
-     console.log("Nhân viên quản lý (Managed Users):", user.managed_users);
-
+  const fetchAllDataManager = async () => {
      try {
         const today = getTodayISO();
-
-        // 1. Lấy Users
-        const { data: uData, error: uError } = await supabase.from('app_users').select('*').neq('role', 'admin');
-        if (uError) console.error("Lỗi tải users:", uError);
-
-        let finalUsers = uData || [];
-        console.log("Tổng users tải về:", finalUsers.length);
-
-        // Lọc Users
-        if (user.managed_users && user.managed_users.trim() !== '') {
-            const allowedUserIds = user.managed_users.split(',').map(id => id.trim());
-            finalUsers = finalUsers.filter(u => allowedUserIds.includes(u.id.toString()));
-            console.log("Users sau khi lọc:", finalUsers.length);
-        } else {
-            console.log("Không có giới hạn nhân viên (hoặc chuỗi rỗng), hiển thị tất cả.");
-        }
-        setUsersList(finalUsers);
-
-        // 2. Lấy Roles (Khu vực)
-        const { data: rData, error: rError } = await supabase.from('job_roles').select('*');
-        if (rError) console.error("Lỗi tải roles:", rError);
-
-        let finalRoles = rData || [];
-        console.log("Tổng roles tải về:", finalRoles.length);
-
-        // Lọc Roles
-        if (user.managed_roles && user.managed_roles.trim() !== '') {
-             const allowedRoleCodes = user.managed_roles.split(',').map(r => r.trim());
-             console.log("Các mã role được phép:", allowedRoleCodes);
-
-             finalRoles = finalRoles.filter(r => allowedRoleCodes.includes(r.code));
-             console.log("Roles sau khi lọc:", finalRoles.length);
-        } else {
-             console.log("Không có giới hạn Role (hoặc chuỗi rỗng), hiển thị tất cả.");
-        }
-        setRolesList(finalRoles);
-
-        // 3. Tải Task & Report dựa trên Role đã lọc
-        const allowedRoleCodes = finalRoles.map(r => r.code);
-
-        if (allowedRoleCodes.length > 0) {
-            const { data: tData } = await supabase.from('task_definitions')
-                .select('*').in('role', allowedRoleCodes).order('time_label', { ascending: true });
-            setTasksConfig(tData || []);
-
-            const { data: repData } = await supabase.from('checklist_logs')
-                .select('role, data').eq('report_date', today).in('role', allowedRoleCodes);
-
-            const reportMap = {};
-            if(repData) repData.forEach(r => reportMap[r.role] = r.data);
-            setChecklistData(reportMap);
-        } else {
-            console.warn("Cảnh báo: Không có role nào được hiển thị -> Không tải task/report.");
-            setTasksConfig([]);
-            setChecklistData({});
-        }
-
+        const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
+        setUsersList(uData || []);
+        const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
+        setRolesList(rData || []);
+        const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
+        setTasksConfig(tData || []);
+        const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
+        const reportMap = {};
+        if(repData) repData.forEach(r => reportMap[r.role] = r.data);
+        setChecklistData(reportMap);
      } catch (error) {
-        console.error("Lỗi CRASH trong fetchAllDataManager:", error);
-        showNotify(setNotification, "Lỗi tải dữ liệu: " + error.message, "error");
+        showNotify(setNotification, "Lỗi tải dữ liệu quản lý", "error");
      }
   };
-
-// ...
 
   if (!user) return <ModernLogin loginForm={loginForm} setLoginForm={setLoginForm} handleLogin={handleLogin} notification={notification} loading={loading} />;
 
@@ -1008,11 +946,11 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
         ) : (
           // Tab 2: Sắp ca (Sử dụng lại component của Admin)
           // Lưu ý: Đảm bảo tên component bên dưới khớp với tên component sắp ca trong file của bạn (thường là AdminShiftManager)
-          <AdminShiftScheduler
-               users={users}
-               roles={roles}
-               setNotify={setNotify}
-           />
+          <AdminShiftManager
+             users={users}
+             roles={roles}
+             setNotify={setNotify} // Truyền thêm setNotify nếu AdminShiftManager cần dùng
+          />
         )}
       </div>
     </div>
@@ -2760,378 +2698,138 @@ const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
 // --- ADMIN USER MANAGER (FULL ACCESS) ---
 const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   const [editingUser, setEditingUser] = useState(null);
+  const [formData, setFormData] = useState({ username: '', password: '', name: '', role: [] });
   const [showPass, setShowPass] = useState(false);
 
-  // Form State bao gồm cả 2 trường mới
-  const [formData, setFormData] = useState({
-    username: '',
-    password: '',
-    name: '',
-    role: [],
-    managed_roles: [], // Lưu các mã role (khu vực) được quản lý
-    managed_users: []  // Lưu các ID nhân viên được quản lý
-  });
-
-  // Khi bấm sửa hoặc reset form
   useEffect(() => {
-    if (editingUser) {
-      setFormData({
-        ...editingUser,
-        role: editingUser.role ? editingUser.role.split(',') : [],
-        // Chuyển chuỗi lưu trong DB thành mảng, lọc bỏ rỗng
-        managed_roles: editingUser.managed_roles ? editingUser.managed_roles.split(',').filter(x => x) : [],
-        managed_users: editingUser.managed_users ? editingUser.managed_users.split(',').filter(x => x) : []
-      });
-    } else {
-      setFormData({
-        username: '', password: '', name: '',
-        role: [], managed_roles: [], managed_users: []
-      });
-    }
+     if(editingUser) {
+        // Chuyển role string "a,b" thành array ["a","b"]
+        const roleArray = editingUser.role.split(',').map(r => r.trim());
+        setFormData({
+            username: editingUser.username,
+            password: editingUser.password,
+            name: editingUser.name,
+            role: roleArray
+        });
+     } else {
+        setFormData({ username: '', password: '', name: '', role: [] });
+     }
   }, [editingUser]);
 
-  // Hàm xử lý chọn/bỏ chọn item trong mảng (dùng chung cho role, managed_roles, managed_users)
-  const toggleArrayItem = (field, value) => {
-    setFormData(prev => {
-      const list = prev[field] || [];
-      if (list.includes(value)) {
-        return { ...prev, [field]: list.filter(item => item !== value) };
-      } else {
-        return { ...prev, [field]: [...list, value] };
-      }
-    });
+  const handleRoleChange = (roleCode) => {
+      setFormData(prev => {
+          if (prev.role.includes(roleCode)) {
+              return { ...prev, role: prev.role.filter(r => r !== roleCode) };
+          } else {
+              return { ...prev, role: [...prev.role, roleCode] };
+          }
+      });
   };
 
-  // Xử lý Lưu
-  const handleSave = async () => {
-    try {
-      // Validate cơ bản
-      if (!formData.username || !formData.password || !formData.name) {
-        return setNotify("Vui lòng điền đủ Tên, User và Pass!", "error");
-      }
-      if (formData.role.length === 0) {
-        return setNotify("Phải chọn ít nhất 1 vai trò (Role)!", "error");
-      }
+  const handleSubmit = async () => {
+    if(!formData.username || !formData.password || !formData.name) return setNotify("Thiếu thông tin!", "error");
+    if(formData.role.length === 0) return setNotify("Chọn ít nhất 1 role", "error");
 
-      // Chuẩn bị payload gửi lên Supabase
-      const payload = {
-        name: formData.name,
-        username: formData.username,
-        password: formData.password,
-        role: formData.role.join(','), // Mảng -> Chuỗi
-        managed_roles: formData.managed_roles.join(','),
-        managed_users: formData.managed_users.join(',')
-      };
+    const roleString = formData.role.join(',');
 
-      if (editingUser) {
-        // CẬP NHẬT
-        const { error } = await supabase
-          .from('app_users')
-          .update(payload)
-          .eq('id', editingUser.id);
-
-        if (error) throw error;
-        setNotify("Đã cập nhật thông tin nhân viên thành công!");
-      } else {
-        // THÊM MỚI
-        // Kiểm tra trùng user
-        const { data: exist } = await supabase
-            .from('app_users')
-            .select('id')
-            .eq('username', formData.username)
-            .maybeSingle();
-
-        if (exist) return setNotify("Tên đăng nhập đã tồn tại!", "error");
-
-        const { error } = await supabase.from('app_users').insert(payload);
-        if (error) throw error;
-        setNotify("Đã thêm nhân viên mới thành công!");
-      }
-
-      setEditingUser(null); // Reset form
-      onRefresh(); // Tải lại danh sách
-    } catch (err) {
-      console.error(err);
-      setNotify("Lỗi lưu dữ liệu: " + err.message, "error");
+    if (editingUser) {
+        const { error } = await supabase.from('app_users').update({
+            password: formData.password,
+            name: formData.name,
+            role: roleString
+        }).eq('id', editingUser.id);
+        if(error) setNotify("Lỗi cập nhật: " + error.message, "error");
+        else { setNotify("Đã cập nhật nhân viên"); setEditingUser(null); onRefresh(); }
+    } else {
+        const { error } = await supabase.from('app_users').insert({...formData, role: roleString});
+        if(error) setNotify("Lỗi thêm: " + error.message, "error");
+        else { setNotify("Đã thêm nhân viên"); onRefresh(); }
     }
   };
 
-  // Xử lý Xóa
   const handleDelete = async (id) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa nhân viên này?")) return;
-    try {
-      const { error } = await supabase.from('app_users').delete().eq('id', id);
-      if (error) throw error;
-      setNotify("Đã xóa nhân viên.");
-      onRefresh();
-    } catch (err) {
-      setNotify("Lỗi xóa: " + err.message, "error");
+    if(window.confirm("Xóa nhân viên này?")) {
+        await supabase.from('app_users').delete().eq('id', id);
+        onRefresh();
     }
   };
-
-  // Kiểm tra xem user đang sửa có phải là Manager không
-  const isManagerRoleSelected = formData.role.some(r => r.includes('manager'));
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in zoom-in duration-300">
+    <div className="space-y-6">
+      <div className={`p-5 rounded-xl border border-slate-200 transition-colors ${editingUser ? 'bg-orange-50 border-orange-200' : 'bg-white'}`}>
+         <h3 className="font-bold text-slate-700 mb-4">{editingUser ? 'Sửa Thông Tin Nhân Viên' : 'Thêm Nhân Viên Mới'}</h3>
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <div>
+                 <input className="w-full border rounded p-2 text-sm mb-3" placeholder="Tên đăng nhập" disabled={!!editingUser} value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})}/>
+                 <input className="w-full border rounded p-2 text-sm mb-3" placeholder="Mật khẩu" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})}/>
+                 <input className="w-full border rounded p-2 text-sm" placeholder="Họ và Tên" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
+             </div>
 
-      {/* --- CỘT TRÁI: FORM NHẬP LIỆU (Chiếm 4 phần) --- */}
-      <div className="lg:col-span-4 space-y-4">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-lg sticky top-4">
-          <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-            {editingUser ? <UserCog className="text-blue-600"/> : <Plus className="text-green-600"/>}
-            {editingUser ? 'Cập nhật nhân sự' : 'Thêm nhân sự mới'}
-          </h3>
-
-          <div className="space-y-3">
-            {/* Input Tên hiển thị */}
-            <div>
-              <label className="text-xs font-bold text-slate-500 uppercase">Tên hiển thị</label>
-              <input
-                type="text"
-                className="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none mt-1"
-                placeholder="Ví dụ: Nguyễn Văn A"
-                value={formData.name}
-                onChange={e => setFormData({...formData, name: e.target.value})}
-              />
-            </div>
-
-            {/* Input Tài khoản & Mật khẩu */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-bold text-slate-500 uppercase">Tài khoản</label>
-                <input
-                  type="text"
-                  className="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none mt-1 font-mono"
-                  value={formData.username}
-                  onChange={e => setFormData({...formData, username: e.target.value})}
-                />
-              </div>
-              <div className="relative">
-                <label className="text-xs font-bold text-slate-500 uppercase">Mật khẩu</label>
-                <input
-                  type={showPass ? "text" : "password"}
-                  className="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 outline-none mt-1 font-mono"
-                  value={formData.password}
-                  onChange={e => setFormData({...formData, password: e.target.value})}
-                />
-                <button
-                  onClick={() => setShowPass(!showPass)}
-                  className="absolute right-2 top-8 text-slate-400 hover:text-blue-600"
-                >
-                  {showPass ? <EyeOff size={16}/> : <Eye size={16}/>}
-                </button>
-              </div>
-            </div>
-
-            {/* Chọn Vai trò (Role) chính */}
-            <div className="pt-2">
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Vai trò (Chức vụ)</label>
-              <div className="flex flex-wrap gap-2">
-                {/* Nút Admin */}
-                <button
-                  onClick={() => toggleArrayItem('role', 'admin')}
-                  className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-                    formData.role.includes('admin')
-                      ? 'bg-purple-600 text-white border-purple-600 shadow-md'
-                      : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
-                  }`}
-                >
-                  ADMIN
-                </button>
-                {/* 2. Nút Manager (BỔ SUNG LẠI NÚT NÀY) */}
-                <button
-                  onClick={() => toggleArrayItem('role', 'manager')}
-                  className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-                    formData.role.includes('manager')
-                      ? 'bg-orange-600 text-white border-orange-600 shadow-md'
-                      : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
-                  }`}
-                >
-                  MANAGER
-                </button>
-                {/* Các role động từ DB */}
-                {roles.map(r => (
-                  <button
-                    key={r.code}
-                    onClick={() => toggleArrayItem('role', r.code)}
-                    className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${
-                      formData.role.includes(r.code)
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-md'
-                        : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
-                    }`}
-                  >
-                    {r.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* --- PHẦN CẤU HÌNH RIÊNG CHO MANAGER --- */}
-            {isManagerRoleSelected && (
-              <div className="mt-4 pt-4 border-t-2 border-dashed border-orange-200 bg-orange-50/50 -mx-2 px-3 pb-3 rounded-lg animate-in slide-in-from-top-2">
-                <div className="flex items-center gap-2 mb-3 text-orange-700">
-                  <ShieldCheck size={18} />
-                  <span className="font-bold text-sm uppercase">Phân quyền Quản Lý</span>
-                </div>
-
-                {/* 1. Chọn Khu vực được quản lý */}
-                <div className="mb-4">
-                  <label className="block text-[11px] font-bold text-orange-800/70 uppercase mb-1.5">
-                    Được xem báo cáo khu vực:
-                  </label>
-                  <div className="flex flex-wrap gap-1.5 bg-white p-2 rounded border border-orange-100">
-                    {roles.filter(r => !r.code.includes('manager')).map(r => (
-                      <div
-                        key={r.code}
-                        onClick={() => toggleArrayItem('managed_roles', r.code)}
-                        className={`px-2 py-1 rounded border text-[10px] font-bold cursor-pointer select-none transition-colors ${
-                          formData.managed_roles.includes(r.code)
-                            ? 'bg-orange-500 text-white border-orange-600'
-                            : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
-                        }`}
-                      >
-                        {r.name}
-                      </div>
-                    ))}
-                    {roles.filter(r => !r.code.includes('manager')).length === 0 && (
-                      <span className="text-xs text-slate-400 italic">Không có khu vực phù hợp</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2. Chọn Nhân viên được quản lý */}
-                <div>
-                  <label className="block text-[11px] font-bold text-orange-800/70 uppercase mb-1.5">
-                    Được quản lý nhân viên:
-                  </label>
-                  <div className="max-h-48 overflow-y-auto border border-orange-100 rounded bg-white p-1 custom-scrollbar">
-                    {users.filter(u => !u.role.includes('admin')).map(u => {
-                       const isChecked = formData.managed_users.includes(String(u.id));
-                       return (
-                        <label key={u.id} className={`flex items-center gap-2 p-1.5 rounded cursor-pointer transition-colors ${isChecked ? 'bg-orange-50' : 'hover:bg-slate-50'}`}>
-                          <input
-                            type="checkbox"
-                            className="w-4 h-4 rounded text-orange-600 focus:ring-orange-500 border-gray-300"
-                            checked={isChecked}
-                            onChange={() => toggleArrayItem('managed_users', String(u.id))}
-                          />
-                          <div className="flex flex-col leading-tight">
-                            <span className={`text-xs font-bold ${isChecked ? 'text-slate-800' : 'text-slate-500'}`}>{u.name}</span>
-                            <span className="text-[10px] text-slate-400">@{u.username} - {u.role}</span>
-                          </div>
-                        </label>
-                       );
-                    })}
-                  </div>
-                  <div className="text-[10px] text-right text-orange-600 mt-1 font-medium">
-                    Đã chọn: {formData.managed_users.length} người
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Nút Action */}
-            <div className="flex gap-2 mt-6 pt-2 border-t border-slate-100">
-              {editingUser && (
-                <button
-                  onClick={() => setEditingUser(null)}
-                  className="px-4 py-3 rounded-xl font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                >
-                  Hủy
-                </button>
-              )}
-              <button
-                onClick={handleSave}
-                className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:shadow-blue-500/50 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <Save size={18} />
-                {editingUser ? 'Lưu Thay Đổi' : 'Tạo Mới'}
-              </button>
-            </div>
-          </div>
-        </div>
+             <div className="border rounded p-3 bg-white h-40 overflow-y-auto">
+                 <label className="text-xs font-bold text-slate-500 mb-2 block">Chọn Khu Vực / Chức Vụ (Đa chọn):</label>
+                 <div className="space-y-2">
+                     <label className="flex items-center gap-2 text-sm font-bold text-purple-600">
+                         <input type="checkbox" checked={formData.role.includes('admin')} onChange={() => handleRoleChange('admin')}/> Admin
+                     </label>
+                     <label className="flex items-center gap-2 text-sm font-bold text-orange-600">
+                         <input type="checkbox" checked={formData.role.includes('manager')} onChange={() => handleRoleChange('manager')}/> Manager
+                     </label>
+                     <div className="border-t my-1"></div>
+                     {roles.map(r => (
+                         <label key={r.code} className="flex items-center gap-2 text-sm">
+                             <input type="checkbox" checked={formData.role.includes(r.code)} onChange={() => handleRoleChange(r.code)}/> {r.name}
+                         </label>
+                     ))}
+                 </div>
+             </div>
+         </div>
+         <div className="flex gap-3 mt-4 justify-end">
+             {editingUser && <button onClick={() => setEditingUser(null)} className="px-4 py-2 text-slate-500 font-bold hover:bg-slate-200 rounded">Hủy</button>}
+             <button onClick={handleSubmit} className={`px-6 py-2 text-white font-bold rounded shadow-lg ${editingUser ? 'bg-orange-600 hover:bg-orange-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                 {editingUser ? 'Lưu Thay Đổi' : 'Thêm Mới'}
+             </button>
+         </div>
       </div>
 
-      {/* --- CỘT PHẢI: DANH SÁCH NHÂN VIÊN (Chiếm 8 phần) --- */}
-      <div className="lg:col-span-8">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-             <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                <Users size={20} className="text-blue-500"/> Danh sách nhân sự ({users.length})
-             </h3>
-             <button onClick={onRefresh} className="p-2 hover:bg-white rounded-full transition-colors text-slate-500"><RefreshCcw size={16}/></button>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
-                <tr>
-                  <th className="p-4 border-b">Tên hiển thị</th>
-                  <th className="p-4 border-b">Vai trò</th>
-                  <th className="p-4 border-b">Tài khoản</th>
-                  <th className="p-4 border-b">Mật khẩu</th>
-                  <th className="p-4 border-b text-right">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody className="text-sm divide-y divide-slate-100">
-                {users.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50 transition-colors group">
-                    <td className="p-4 font-bold text-slate-700">
-                        {u.name}
-                        {/* Hiển thị indicator nếu là Manager có phân quyền */}
-                        {(u.managed_roles || u.managed_users) && (
-                            <div className="flex gap-1 mt-1">
-                                {u.managed_roles && <span className="text-[10px] px-1.5 py-0.5 bg-orange-50 text-orange-600 border border-orange-100 rounded-full">Khu vực: {u.managed_roles.split(',').length}</span>}
-                                {u.managed_users && <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-100 rounded-full">Nhân viên: {u.managed_users.split(',').length}</span>}
-                            </div>
-                        )}
-                    </td>
-                    <td className="p-4">
-                      <div className="flex flex-wrap gap-1 max-w-[200px]">
-                        {u.role.split(',').map((r, idx) => (
-                          <span key={idx} className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                            r.includes('admin') ? 'bg-purple-100 text-purple-700' :
-                            (r.includes('manager') ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600')
-                          }`}>
-                            {r}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="p-4 font-mono text-slate-500">{u.username}</td>
-                    <td className="p-4 font-mono text-slate-400 group-hover:text-slate-600 transition-colors">
-                        {showPass ? u.password : '••••••'}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => setEditingUser(u)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Sửa"
-                        >
-                          <Edit3 size={16}/>
-                        </button>
-                        <button
-                          onClick={() => handleDelete(u.id)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Xóa"
-                        >
-                          <Trash2 size={16}/>
-                        </button>
-                      </div>
-                    </td>
+      <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
+         <div className="p-2 border-b flex justify-end">
+             <button onClick={() => setShowPass(!showPass)} className="text-xs flex items-center gap-1 text-slate-500 hover:text-blue-600 font-bold px-3 py-1 rounded hover:bg-slate-100">
+                {showPass ? <EyeOff size={14}/> : <Eye size={14}/>} {showPass ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+             </button>
+         </div>
+         <table className="w-full text-sm text-left">
+            <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
+               <tr>
+                  <th className="p-4">Nhân viên</th>
+                  <th className="p-4">Khu vực (Role)</th>
+                  <th className="p-4">Username</th>
+                  <th className="p-4 text-blue-600">Mật khẩu</th>
+                  <th className="p-4 text-right">Thao tác</th>
+               </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+               {users.map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50">
+                     <td className="p-4 font-bold text-slate-700">{u.name}</td>
+                     <td className="p-4">
+                         <div className="flex flex-wrap gap-1">
+                             {u.role.split(',').map(r => (
+                                <span key={r} className={`px-2 py-1 rounded text-xs font-bold uppercase ${r.includes('admin') ? 'bg-purple-100 text-purple-600' : (r.includes('manager') ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500')}`}>
+                                    {r}
+                                </span>
+                             ))}
+                         </div>
+                     </td>
+                     <td className="p-4 font-mono text-slate-500">{u.username}</td>
+                     <td className="p-4 font-mono text-slate-600">{showPass ? u.password : '••••••'}</td>
+                     <td className="p-4 text-right flex justify-end gap-2">
+                        <button onClick={() => setEditingUser(u)} className="p-2 text-blue-600 hover:bg-blue-50 rounded"><Edit3 size={18}/></button>
+                        <button onClick={() => handleDelete(u.id)} className="p-2 text-red-600 hover:bg-red-50 rounded"><Trash2 size={18}/></button>
+                     </td>
                   </tr>
-                ))}
-                {users.length === 0 && (
-                   <tr>
-                       <td colSpan="5" className="p-8 text-center text-slate-400 italic">Chưa có nhân viên nào.</td>
-                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+               ))}
+            </tbody>
+         </table>
       </div>
     </div>
   );
