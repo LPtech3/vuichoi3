@@ -445,8 +445,17 @@ const ModernLogin = ({ loginForm, setLoginForm, handleLogin, notification, loadi
 // STAFF COMPONENTS (MULTI-ROLE & IMAGE COMPRESSION)
 // ==========================================
 const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }) => {
-    const userRoles = user.role.split(',').map(r => r.trim());
-    const [activeRole, setActiveRole] = useState(userRoles[0]);
+    // --- SỬA: Lọc bỏ 'manager' khỏi danh sách hiển thị Tabs ---
+    const allRoles = user.role.split(',').map(r => r.trim());
+
+    // Chỉ lấy các role không chứa chữ 'manager' để hiện tab công việc
+    const workRoles = allRoles.filter(r => !r.toLowerCase().includes('manager'));
+
+    // (Phòng hờ trường hợp user chỉ có đúng 1 quyền manager thì vẫn hiện để không lỗi,
+    // còn bình thường sẽ ưu tiên workRoles)
+    const displayRoles = workRoles.length > 0 ? workRoles : allRoles;
+
+    const [activeRole, setActiveRole] = useState(displayRoles[0]);
 
     // Switch role logic
     // TRONG StaffDashboard
@@ -585,10 +594,10 @@ const StaffDashboard = ({ user, tasks, checklistData, onUpdateLocal, setNotify }
 
     return (
       <div className="space-y-6">
-        {/* TAB ROLE SWITCHER */}
-        {userRoles.length > 1 && (
+        {/* Chỉ hiện Tabs nếu có nhiều hơn 1 công việc thực tế */}
+        {displayRoles.length > 1 && (
             <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 p-1">
-                {userRoles.map(r => (
+                {displayRoles.map(r => (
                     <button
                         key={r}
                         onClick={() => setActiveRole(r)}
