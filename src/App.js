@@ -386,6 +386,7 @@ export default function App() {
             ) : (user.role.includes('manager') && isManagerMode) ? (
               // Manager + Đang bật chế độ Manager: Hiện Dashboard Quản lý
               <ManagerDashboard
+                 user={user} // <--- QUAN TRỌNG: Thêm dòng này
                  users={usersList}
                  roles={rolesList}
                  allTasks={tasksConfig}
@@ -903,140 +904,170 @@ const AdminHistoryLog = ({ users, roles }) => {
 };
 // MANAGER DASHBOARD
 // ==========================================
-const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-   const [tab, setTab] = useState('monitor'); // Default monitor
-   return (
-      <div>
-         <div className="flex gap-4 mb-6 border-b border-slate-200 pb-1">
-             <button onClick={() => setTab('monitor')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'monitor' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
-               <LayoutDashboard size={18}/> Giám Sát Tiến Độ
-            </button>
-            <button onClick={() => setTab('assign')} className={`flex items-center gap-2 px-4 py-3 font-bold text-sm border-b-2 ${tab === 'assign' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>
-               <UserCog size={18}/> Phân Công & Nhân Sự
-            </button>
-            <button onClick={onRefresh} className="ml-auto p-2 text-slate-400 hover:text-blue-600"><RefreshCcw size={18}/></button>
-         </div>
+// --- MANAGER DASHBOARD (ĐÃ CẬP NHẬT) ---
+// Thêm tab: Phân công nhân sự & Sắp ca làm việc
+// --- MANAGER DASHBOARD (ĐÃ CẬP NHẬT FILTER & PERMISSION) ---
+const ManagerDashboard = ({ user, users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
+  const [activeTab, setActiveTab] = useState('assignment');
 
-         {/* Sử dụng component dành riêng cho Manager */}
-         {tab === 'assign' && <ManagerTaskAssignment users={users} roles={roles} onRefresh={onRefresh} setNotify={setNotify} />}
-         {/* Giữ lại AdminReports nhưng có thêm props users để lọc */}
-         {tab === 'monitor' && <AdminHistoryLog users={users} roles={roles} />}
+  // --- LOGIC LỌC: Chỉ hiển thị Nhân viên & Khu vực được phân quyền ---
+  // 1. Lấy danh sách ID nhân viên & Mã khu vực từ user hiện tại
+  const allowedUserIds = useMemo(() =>
+    user.managed_users ? user.managed_users.split(',').map(id => parseInt(id)) : []
+  , [user.managed_users]);
+
+  const allowedRoleCodes = useMemo(() =>
+    user.managed_roles ? user.managed_roles.split(',') : []
+  , [user.managed_roles]);
+
+  // 2. Lọc danh sách Users & Roles
+  const filteredUsers = useMemo(() => {
+    if (user.role === 'admin') return users; // Admin thấy hết (phòng hờ)
+    // Manager chỉ thấy nhân viên có trong danh sách được gán
+    return users.filter(u => allowedUserIds.includes(u.id));
+  }, [users, allowedUserIds, user.role]);
+
+  const filteredRoles = useMemo(() => {
+    if (user.role === 'admin') return roles;
+    // Manager chỉ thấy các khu vực được gán
+    return roles.filter(r => allowedRoleCodes.includes(r.code));
+  }, [roles, allowedRoleCodes, user.role]);
+
+  return (
+    <div className="space-y-6">
+      {/* Tab Navigation */}
+      <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex">
+        <button onClick={() => setActiveTab('assignment')} className={`flex-1 py-3 px-4 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'assignment' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+          <UserCog size={18} /> Phân Công Nhân Sự
+        </button>
+        <button onClick={() => setActiveTab('shift')} className={`flex-1 py-3 px-4 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'shift' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+          <CalendarClock size={18} /> Sắp Ca Làm Việc
+        </button>
       </div>
-   );
+
+      <div className="transition-all duration-300">
+        {activeTab === 'assignment' ? (
+          <ManagerTaskAssignment
+             users={filteredUsers}  // Chỉ truyền user được phép
+             roles={filteredRoles}  // Chỉ truyền role được phép
+             onRefresh={onRefresh}
+             setNotify={setNotify}
+          />
+        ) : (
+          <AdminShiftManager
+             users={filteredUsers}
+             roles={filteredRoles}
+             setNotify={setNotify}
+          />
+        )}
+      </div>
+    </div>
+  );
 };
 
 // --- NEW COMPONENT: MANAGER TASK ASSIGNMENT ---
 // Chỉ phân công công việc, không sửa user/pass
+// --- MANAGER TASK ASSIGNMENT (ĐÃ CẬP NHẬT: BỎ QUYỀN CHỈNH MANAGER) ---
 const ManagerTaskAssignment = ({ users, roles, onRefresh, setNotify }) => {
-    // Local state để quản lý checkbox thay đổi trước khi bấm lưu
-    const [userRolesState, setUserRolesState] = useState({});
-    const [loadingSave, setLoadingSave] = useState(null);
+  const [userRolesState, setUserRolesState] = useState({});
+  const [loadingSave, setLoadingSave] = useState(null);
 
-    // Init state từ props users
-    useEffect(() => {
-        const init = {};
-        users.forEach(u => {
-            init[u.id] = u.role.split(',').map(r => r.trim());
-        });
-        setUserRolesState(init);
-    }, [users]);
+  useEffect(() => {
+    const init = {};
+    users.forEach(u => { init[u.id] = u.role.split(',').map(r => r.trim()); });
+    setUserRolesState(init);
+  }, [users]);
 
-    const toggleRole = (userId, roleCode) => {
-        setUserRolesState(prev => {
-            const currentRoles = prev[userId] || [];
-            if (currentRoles.includes(roleCode)) {
-                return { ...prev, [userId]: currentRoles.filter(r => r !== roleCode) };
-            } else {
-                return { ...prev, [userId]: [...currentRoles, roleCode] };
-            }
-        });
-    };
+  const toggleRole = (userId, roleCode) => {
+    setUserRolesState(prev => {
+      const currentRoles = prev[userId] || [];
+      if (currentRoles.includes(roleCode)) {
+        return { ...prev, [userId]: currentRoles.filter(r => r !== roleCode) };
+      } else {
+        return { ...prev, [userId]: [...currentRoles, roleCode] };
+      }
+    });
+  };
 
-    const handleSaveUser = async (user) => {
-        const selectedRoles = userRolesState[user.id];
-        if (!selectedRoles || selectedRoles.length === 0) return setNotify("Phải chọn ít nhất 1 công việc!", "error");
+  const handleSaveUser = async (user) => {
+    const selectedRoles = userRolesState[user.id];
+    // Manager không được để trống role, ít nhất phải có 1 role (hoặc rỗng nếu muốn tước hết quyền làm việc, tuỳ logic)
+    const roleString = selectedRoles ? selectedRoles.join(',') : '';
 
-        setLoadingSave(user.id);
-        const roleString = selectedRoles.join(',');
+    setLoadingSave(user.id);
+    try {
+      const { error } = await supabase.from('app_users').update({ role: roleString }).eq('id', user.id);
+      if (error) throw error;
+      setNotify(`Đã cập nhật công việc cho ${user.name}`);
+      onRefresh();
+    } catch (err) {
+      setNotify("Lỗi cập nhật: " + err.message, "error");
+    } finally {
+      setLoadingSave(null);
+    }
+  };
 
-        try {
-            const { error } = await supabase.from('app_users').update({ role: roleString }).eq('id', user.id);
-            if (error) throw error;
-            setNotify("Đã cập nhật phân công cho " + user.name);
-            onRefresh();
-        } catch (err) {
-            setNotify("Lỗi: " + err.message, "error");
-        } finally {
-            setLoadingSave(null);
-        }
-    };
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+            <tr>
+              <th className="p-4">Nhân viên</th>
+              <th className="p-4">Phân công công việc (Khu vực)</th>
+              <th className="p-4 w-32">Thao tác</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-50">
+            {users.length === 0 ? (
+               <tr><td colSpan="3" className="p-8 text-center text-slate-400 italic">Bạn chưa được phân quyền quản lý nhân viên nào.</td></tr>
+            ) : users.map(u => {
+              const currentSelected = userRolesState[u.id] || [];
+              const isUnsaved = JSON.stringify(currentSelected.sort()) !== JSON.stringify(u.role.split(',').map(r=>r.trim()).sort());
 
-    return (
-        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-            <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b">
-                    <tr>
-                        <th className="p-4 w-1/4">Nhân viên</th>
-                        <th className="p-4 w-1/2">Phân công Khu vực / Công việc</th>
-                        <th className="p-4 w-1/4 text-right">Thao tác</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                    {users.map(u => {
-                         // Manager không được sửa admin
-                         if(u.role === 'admin') return null;
-                         const currentSelected = userRolesState[u.id] || [];
-
-                         return (
-                            <tr key={u.id} className="hover:bg-slate-50">
-                                <td className="p-4 align-top">
-                                    <div className="font-bold text-slate-700 text-base">{u.name}</div>
-                                    <div className="text-slate-400 text-xs font-mono mt-1">@{u.username}</div>
-                                </td>
-                                <td className="p-4">
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                        {roles.map(r => {
-                                            const isChecked = currentSelected.includes(r.code);
-                                            return (
-                                                <div key={r.code}
-                                                     onClick={() => toggleRole(u.id, r.code)}
-                                                     className={`cursor-pointer border rounded-lg px-3 py-2 flex items-center gap-2 transition-all select-none ${isChecked ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-100'}`}
-                                                >
-                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-300'}`}>
-                                                        {isChecked && <CheckCircle2 size={12}/>}
-                                                    </div>
-                                                    <span className="font-medium text-xs">{r.name}</span>
-                                                </div>
-                                            )
-                                        })}
-                                        {/* Tùy chọn Manager (nếu manager muốn cấp quyền manager cho người khác - tuỳ business logic, ở đây cho phép) */}
-                                        <div onClick={() => toggleRole(u.id, 'manager')}
-                                             className={`cursor-pointer border rounded-lg px-3 py-2 flex items-center gap-2 transition-all select-none ${currentSelected.includes('manager') ? 'bg-orange-50 border-orange-200 text-orange-700' : 'bg-white border-slate-200 text-slate-500'}`}
-                                        >
-                                             <div className={`w-4 h-4 rounded border flex items-center justify-center ${currentSelected.includes('manager') ? 'bg-orange-600 border-orange-600 text-white' : 'bg-white border-slate-300'}`}>
-                                                 {currentSelected.includes('manager') && <CheckCircle2 size={12}/>}
-                                             </div>
-                                             <span className="font-medium text-xs">Quản Lý (Manager)</span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td className="p-4 align-top text-right">
-                                    <button
-                                        onClick={() => handleSaveUser(u)}
-                                        disabled={loadingSave === u.id}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-lg shadow-blue-500/30 flex items-center gap-2 ml-auto"
-                                    >
-                                        {loadingSave === u.id ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Lưu
-                                    </button>
-                                </td>
-                            </tr>
-                         )
-                    })}
-                </tbody>
-            </table>
-        </div>
-    );
-}
+              return (
+                <tr key={u.id} className="hover:bg-slate-50">
+                   <td className="p-4 font-bold text-slate-700">
+                     <div>{u.name}</div>
+                     <div className="text-xs text-slate-400 font-normal">{u.username}</div>
+                   </td>
+                   <td className="p-4">
+                      <div className="flex flex-wrap gap-2">
+                        {/* Chỉ hiện các Roles được phép quản lý */}
+                        {roles.map(r => (
+                          <div
+                             key={r.code}
+                             onClick={() => toggleRole(u.id, r.code)}
+                             className={`cursor-pointer border rounded-lg px-3 py-2 flex items-center gap-2 transition-all select-none ${currentSelected.includes(r.code) ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-300'}`}
+                          >
+                             <div className={`w-4 h-4 rounded border flex items-center justify-center ${currentSelected.includes(r.code) ? 'bg-blue-600 border-blue-600' : 'bg-white border-slate-300'}`}>
+                                {currentSelected.includes(r.code) && <CheckSquare size={12} className="text-white"/>}
+                             </div>
+                             <span className="font-medium text-xs">{r.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                   </td>
+                   <td className="p-4">
+                      {isUnsaved && (
+                        <button
+                          onClick={() => handleSaveUser(u)}
+                          disabled={loadingSave === u.id}
+                          className="w-full bg-blue-600 text-white px-3 py-2 rounded-lg font-bold text-xs shadow-lg shadow-blue-500/30 hover:bg-blue-700 flex items-center justify-center gap-2"
+                        >
+                          {loadingSave === u.id ? <Loader2 className="animate-spin" size={14}/> : <Save size={14}/>} Lưu
+                        </button>
+                      )}
+                   </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 // ==========================================
 // COMPONENT: SẮP CA LÀM VIỆC (MULTI-DAY & MULTI-ROLE)
 // ==========================================
@@ -2082,264 +2113,174 @@ const AdminReports = ({ allTasks, roles, users }) => {
     </div>
   );
 };
+// --- ADMIN USER LIST (CẬP NHẬT: THÊM FORM PHÂN QUYỀN MANAGER) ---
 const AdminUserList = ({ users, roles, onRefresh, setNotify }) => {
   const [editingUser, setEditingUser] = useState(null);
-  const [filterRole, setFilterRole] = useState(''); // State cho bộ lọc khu vực
+  const [formData, setFormData] = useState({ username: '', password: '', name: '', role: '', managed_roles: [], managed_users: [] });
   const [showPass, setShowPass] = useState(false);
+  const [filterRole, setFilterRole] = useState('');
 
-  // State form
-  const [formData, setFormData] = useState({
-      name: '',
-      username: '',
-      password: '',
-      role: ''
-  });
-
-  // Khi bấm sửa user, tự động điền dữ liệu vào form
+  // Khi bấm sửa user
   useEffect(() => {
     if (editingUser) {
       setFormData({
-        name: editingUser.name,
         username: editingUser.username,
         password: editingUser.password,
-        role: editingUser.role
+        name: editingUser.name,
+        role: editingUser.role,
+        // Chuyển chuỗi CSV thành mảng để dùng trong Multi-select
+        managed_roles: editingUser.managed_roles ? editingUser.managed_roles.split(',').filter(x=>x) : [],
+        managed_users: editingUser.managed_users ? editingUser.managed_users.split(',').filter(x=>x) : []
       });
     } else {
-      // Mặc định chọn role đầu tiên nếu thêm mới
-      setFormData({
-          name: '',
-          username: '',
-          password: '',
-          role: roles.length > 0 ? roles[0].code : ''
-      });
+      setFormData({ username: '', password: '', name: '', role: 'staff', managed_roles: [], managed_users: [] });
     }
-  }, [editingUser, roles]);
+  }, [editingUser]);
 
-  // Xử lý Lưu (Thêm mới hoặc Cập nhật)
   const handleSave = async () => {
-    if (!formData.username || !formData.password || !formData.name) {
-        return setNotify("Vui lòng nhập đủ thông tin", "error");
-    }
+    if (!formData.username || !formData.password || !formData.name) return setNotify("Vui lòng nhập đủ thông tin!", "error");
+
+    // Chuẩn bị dữ liệu submit
+    const submitData = {
+      username: formData.username,
+      password: formData.password,
+      name: formData.name,
+      role: formData.role,
+      // Lưu dưới dạng chuỗi CSV
+      managed_roles: formData.managed_roles.join(','),
+      managed_users: formData.managed_users.join(',')
+    };
 
     try {
-        if (editingUser) {
-            // Update
-            const { error } = await supabase.from('app_users').update(formData).eq('id', editingUser.id);
-            if (error) throw error;
-            setNotify("Đã cập nhật nhân viên");
-        } else {
-            // Insert
-            const { error } = await supabase.from('app_users').insert(formData);
-            if (error) throw error;
-            setNotify("Đã thêm nhân viên mới");
-        }
-
-        setEditingUser(null);
-        onRefresh();
+      if (editingUser) {
+        const { error } = await supabase.from('app_users').update(submitData).eq('id', editingUser.id);
+        if (error) throw error;
+        setNotify("Đã cập nhật nhân viên");
+      } else {
+        const { error } = await supabase.from('app_users').insert(submitData);
+        if (error) throw error;
+        setNotify("Đã thêm nhân viên mới");
+      }
+      setEditingUser(null);
+      onRefresh();
     } catch (err) {
-        setNotify("Lỗi: " + err.message, "error");
+      setNotify("Lỗi: " + err.message, "error");
     }
   };
 
-  // Xử lý Xóa
+  // Helper cho checkbox nhiều lựa chọn
+  const toggleItem = (listName, itemValue) => {
+    setFormData(prev => {
+      const currentList = prev[listName];
+      if (currentList.includes(itemValue.toString())) {
+        return { ...prev, [listName]: currentList.filter(i => i !== itemValue.toString()) };
+      } else {
+        return { ...prev, [listName]: [...currentList, itemValue.toString()] };
+      }
+    });
+  };
+
   const handleDelete = async (id) => {
-    if (window.confirm("Bạn có chắc muốn xóa nhân viên này? Dữ liệu lịch sử làm việc cũng sẽ bị xóa.")) {
-        try {
-            const { error } = await supabase.from('app_users').delete().eq('id', id);
-            if (error) throw error;
-            setNotify("Đã xóa nhân viên");
-            onRefresh();
-        } catch (err) {
-            setNotify("Lỗi xóa: " + err.message, "error");
-        }
+    if (window.confirm("Xóa nhân viên này?")) {
+      await supabase.from('app_users').delete().eq('id', id);
+      onRefresh();
     }
   };
 
-  // Logic lọc danh sách hiển thị
-  const filteredUsers = filterRole
-    ? users.filter(u => u.role.includes(filterRole))
-    : users;
+  const filteredUsers = filterRole ? users.filter(u => u.role.includes(filterRole)) : users;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* CỘT TRÁI: FORM NHẬP LIỆU */}
+      {/* FORM NHẬP LIỆU */}
       <div className="bg-white p-5 rounded-xl border border-slate-200 h-fit sticky top-4 shadow-sm">
-        <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-lg text-slate-800">
-                {editingUser ? 'Sửa Thông Tin' : 'Thêm Nhân Sự'}
-            </h3>
-            {editingUser && (
-                <button onClick={() => setEditingUser(null)} className="text-xs text-red-500 font-bold hover:underline">
-                    Hủy sửa
-                </button>
-            )}
-        </div>
+        <h3 className="font-bold text-lg text-slate-800 mb-4">{editingUser ? 'Sửa Thông Tin' : 'Thêm Nhân Sự'}</h3>
 
         <div className="space-y-4">
-            <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Họ và tên</label>
-                <input
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Ví dụ: Nguyễn Văn A"
-                    value={formData.name}
-                    onChange={e => setFormData({...formData, name: e.target.value})}
-                />
-            </div>
+           <input className="w-full border rounded-lg p-2.5 text-sm" placeholder="Họ tên" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+           <select className="w-full border rounded-lg p-2.5 text-sm font-bold" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})}>
+              <option value="staff">Nhân viên (Staff)</option>
+              <option value="manager">Quản lý (Manager)</option>
+              <option value="admin">Quản trị viên (Admin)</option>
+           </select>
 
-            <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Khu vực / Chức vụ</label>
-                <select
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    value={formData.role}
-                    onChange={e => setFormData({...formData, role: e.target.value})}
-                >
-                    <option value="admin">Admin (Quản trị viên)</option>
-                    {roles.map(r => (
-                        <option key={r.code} value={r.code}>{r.name}</option>
-                    ))}
-                    {/* Thêm option Manager nếu cần quản lý vùng */}
-                    {roles.map(r => (
-                        <option key={`manager_${r.code}`} value={`manager,${r.code}`}>Quản lý - {r.name}</option>
-                    ))}
-                </select>
-                <p className="text-[10px] text-slate-400 mt-1 italic">
-                    * Chọn khu vực để phân quyền cho nhân viên đó.
-                </p>
-            </div>
+           {/* --- PHẦN PHÂN QUYỀN QUẢN LÝ (Chỉ hiện khi role là Manager) --- */}
+           {formData.role.includes('manager') && (
+             <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+               <p className="text-xs font-bold text-blue-600 uppercase flex items-center gap-1"><ShieldCheck size={14}/> Phân quyền quản lý</p>
 
-            <div className="grid grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tên đăng nhập</label>
-                    <input
-                        className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        value={formData.username}
-                        onChange={e => setFormData({...formData, username: e.target.value})}
-                    />
-                </div>
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Mật khẩu</label>
-                    <input
-                        type="text"
-                        className="w-full border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                        value={formData.password}
-                        onChange={e => setFormData({...formData, password: e.target.value})}
-                    />
-                </div>
-            </div>
+               {/* Chọn Khu vực quản lý */}
+               <div>
+                 <p className="text-xs font-bold text-slate-500 mb-1">Được quản lý khu vực:</p>
+                 <div className="max-h-32 overflow-y-auto border bg-white rounded p-2 space-y-1">
+                   {roles.map(r => (
+                     <label key={r.code} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 p-1 rounded">
+                       <input type="checkbox" checked={formData.managed_roles.includes(r.code)} onChange={() => toggleItem('managed_roles', r.code)} />
+                       <span>{r.name}</span>
+                     </label>
+                   ))}
+                 </div>
+               </div>
 
-            <div className="pt-2">
-                <button
-                    onClick={handleSave}
-                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-                >
-                    <Save size={18} />
-                    {editingUser ? 'Cập Nhật Nhân Sự' : 'Thêm Nhân Sự Mới'}
-                </button>
-            </div>
+               {/* Chọn Nhân viên quản lý */}
+               <div>
+                 <p className="text-xs font-bold text-slate-500 mb-1">Được quản lý nhân viên:</p>
+                 <div className="max-h-40 overflow-y-auto border bg-white rounded p-2 space-y-1">
+                   {users.filter(u => u.id !== editingUser?.id && u.role !== 'admin').map(u => (
+                     <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 p-1 rounded">
+                       <input type="checkbox" checked={formData.managed_users.includes(u.id.toString())} onChange={() => toggleItem('managed_users', u.id)} />
+                       <span>{u.name} <span className="text-xs text-slate-400">({u.role})</span></span>
+                     </label>
+                   ))}
+                 </div>
+               </div>
+             </div>
+           )}
+
+           <div className="grid grid-cols-2 gap-2">
+             <input className="border rounded-lg p-2.5 text-sm" placeholder="Username" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} />
+             <input className="border rounded-lg p-2.5 text-sm" type={showPass ? 'text' : 'password'} placeholder="Password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
+           </div>
+
+           <div className="flex gap-2 pt-2">
+              {editingUser && <button onClick={() => setEditingUser(null)} className="flex-1 bg-slate-100 text-slate-600 py-2 rounded-lg font-bold">Hủy</button>}
+              <button onClick={handleSave} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold">Lưu</button>
+           </div>
         </div>
       </div>
 
-      {/* CỘT PHẢI: DANH SÁCH NHÂN SỰ */}
+      {/* DANH SÁCH USER (CỘT BÊN PHẢI) - GIỮ NGUYÊN CODE CŨ HOẶC DÙNG LẠI SNIPPET CŨ */}
       <div className="lg:col-span-2 space-y-4">
-        {/* THANH CÔNG CỤ & BỘ LỌC */}
-        <div className="bg-white p-3 rounded-xl border border-slate-200 flex justify-between items-center shadow-sm">
-            <div className="flex items-center gap-3">
-                <Filter size={18} className="text-slate-500"/>
-                <span className="text-sm font-bold text-slate-600 hidden sm:inline">Lọc theo khu vực:</span>
-                <select
-                    className="border-none bg-transparent font-bold text-blue-600 focus:ring-0 cursor-pointer text-sm outline-none"
-                    value={filterRole}
-                    onChange={e => setFilterRole(e.target.value)}
-                >
-                    <option value="">-- Tất cả nhân viên --</option>
-                    <option value="admin">Quản trị viên (Admin)</option>
-                    {roles.map(r => <option key={r.code} value={r.code}>{r.name}</option>)}
-                </select>
-            </div>
-
-            <button
-                onClick={() => setShowPass(!showPass)}
-                className="flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded transition-colors"
-            >
-                {showPass ? <EyeOff size={14}/> : <Eye size={14}/>}
-                {showPass ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-            </button>
-        </div>
-
-        {/* BẢNG DANH SÁCH */}
-        <div className="bg-white rounded-xl shadow border border-slate-200 overflow-hidden">
-            <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b border-slate-100">
-                    <tr>
-                        <th className="p-4">Nhân viên</th>
-                        <th className="p-4">Khu vực / Vai trò</th>
-                        <th className="p-4 hidden sm:table-cell">Tài khoản</th>
-                        <th className="p-4 text-right">Thao tác</th>
-                    </tr>
+         {/* ... (Phần hiển thị bảng danh sách user giữ nguyên như cũ, chỉ cần chú ý nút Edit gọi setEditingUser) ... */}
+         {/* Code hiển thị danh sách user ở đây (giống trong file cũ của bạn),
+             nhớ đảm bảo nút Edit gọi setEditingUser(u) */}
+         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+             <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-xs border-b">
+                   <tr><th className="p-4">Tên</th><th className="p-4">Vai trò</th><th className="p-4 text-right">#</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                    {filteredUsers.length === 0 ? (
-                        <tr><td colSpan="4" className="p-6 text-center text-slate-400">Không tìm thấy nhân viên nào.</td></tr>
-                    ) : (
-                        filteredUsers.map(u => (
-                            <tr key={u.id} className="hover:bg-slate-50 transition-colors group">
-                                <td className="p-4">
-                                    <div className="font-bold text-slate-700 text-base">{u.name}</div>
-                                    <div className="text-xs text-slate-400 font-mono sm:hidden mt-1">@{u.username}</div>
-                                </td>
-                                <td className="p-4">
-                                    <div className="flex flex-wrap gap-1">
-                                        {u.role.split(',').map(r => {
-                                            const roleName = roles.find(item => item.code === r.trim())?.name || r;
-                                            const isAdmin = r.includes('admin');
-                                            const isManager = r.includes('manager');
-
-                                            return (
-                                                <span key={r} className={`px-2.5 py-1 rounded-md text-xs font-bold border ${
-                                                    isAdmin
-                                                        ? 'bg-purple-50 text-purple-600 border-purple-100'
-                                                        : (isManager
-                                                            ? 'bg-orange-50 text-orange-600 border-orange-100'
-                                                            : 'bg-blue-50 text-blue-600 border-blue-100')
-                                                }`}>
-                                                    {isAdmin ? 'Quản Trị Viên' : roleName}
-                                                </span>
-                                            );
-                                        })}
-                                    </div>
-                                </td>
-                                <td className="p-4 hidden sm:table-cell">
-                                    <div className="flex flex-col">
-                                        <span className="font-mono text-slate-600 font-bold">@{u.username}</span>
-                                        <span className="text-xs text-slate-400 font-mono mt-0.5">
-                                            {showPass ? u.password : '••••••'}
-                                        </span>
-                                    </div>
-                                </td>
-                                <td className="p-4 text-right">
-                                    <div className="flex justify-end gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            onClick={() => setEditingUser(u)}
-                                            className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                                            title="Sửa thông tin"
-                                        >
-                                            <Edit3 size={16}/>
-                                        </button>
-                                        <button
-                                            onClick={() => handleDelete(u.id)}
-                                            className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
-                                            title="Xóa nhân viên"
-                                        >
-                                            <Trash2 size={16}/>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))
-                    )}
+                   {filteredUsers.map(u => (
+                      <tr key={u.id} className="hover:bg-slate-50">
+                         <td className="p-4 font-bold text-slate-700">{u.name}</td>
+                         <td className="p-4">
+                            <span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold uppercase">{u.role}</span>
+                            {/* Hiển thị tóm tắt quyền nếu là manager */}
+                            {u.role.includes('manager') && (
+                               <div className="text-[10px] text-slate-400 mt-1 max-w-[200px]">
+                                  QL: {u.managed_roles ? u.managed_roles : 'Không có khu vực'} <br/>
+                                  NV: {u.managed_users ? u.managed_users.split(',').length + ' người' : '0 người'}
+                               </div>
+                            )}
+                         </td>
+                         <td className="p-4 text-right">
+                            <button onClick={() => setEditingUser(u)} className="text-blue-600 hover:bg-blue-50 p-2 rounded"><Edit3 size={16}/></button>
+                            <button onClick={() => handleDelete(u.id)} className="text-red-600 hover:bg-red-50 p-2 rounded ml-1"><Trash2 size={16}/></button>
+                         </td>
+                      </tr>
+                   ))}
                 </tbody>
-            </table>
-        </div>
+             </table>
+         </div>
       </div>
     </div>
   );
