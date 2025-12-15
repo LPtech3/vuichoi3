@@ -905,6 +905,9 @@ const AdminHistoryLog = ({ users, roles }) => {
 // ==========================================
 // MANAGER DASHBOARD (Cập nhật thêm tab Tiến độ)
 // ==========================================
+// ==========================================
+// MANAGER DASHBOARD (ĐÃ SỬA TÊN COMPONENT THỐNG KÊ)
+// ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
   // Thêm 'stats' vào danh sách các tab
   const [tab, setTab] = useState('shifts'); // 'shifts' | 'roles' | 'stats'
@@ -962,12 +965,11 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* Tab Tiến Độ (Sử dụng lại component của Admin) */}
+        {/* Tab Tiến Độ (Sửa AdminStats -> AdminStatistics) */}
         {tab === 'stats' && (
-          <AdminStats
-            users={users}        // Danh sách nhân viên (đã lọc bỏ admin ở App.js)
+          <AdminStatistics
+            users={users} // Component này sẽ dùng danh sách users (đã lọc theo Manager) để hiển thị
             roles={roles}
-            initialReports={initialReports} // Dữ liệu báo cáo/checklist
           />
         )}
       </div>
