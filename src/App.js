@@ -907,39 +907,41 @@ const AdminHistoryLog = ({ users, roles }) => {
 // ==========================================
 // ==========================================
 // ==========================================
-// MANAGER DASHBOARD (Cập nhật Tab Tiến Độ - Ảnh)
+// MANAGER DASHBOARD (Đã thêm tab Tiến Độ Thô/Ảnh)
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-  // Tab state: 'shifts' | 'roles' | 'reports'
-  const [tab, setTab] = useState('shifts');
+  // Giữ nguyên logic state cũ, thêm 'reports'
+  const [activeTab, setActiveTab] = useState('shift'); // 'shift' | 'assignment' | 'reports'
 
   return (
     <div className="space-y-6">
       {/* --- THANH ĐIỀU HƯỚNG TABS --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2">
+        {/* Tab 1: Sắp Lịch (Giữ nguyên) */}
         <button
-          onClick={() => setTab('shifts')}
+          onClick={() => setActiveTab('shift')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
-            tab === 'shifts' ? 'bg-blue-100 text-blue-700' : 'hover:bg-slate-100 text-slate-600'
+            activeTab === 'shift' ? 'bg-blue-100 text-blue-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
           <CalendarClock size={18} /> Sắp Lịch Làm
         </button>
 
+        {/* Tab 2: Phân Công (Giữ nguyên) */}
         <button
-          onClick={() => setTab('roles')}
+          onClick={() => setActiveTab('assignment')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
-            tab === 'roles' ? 'bg-orange-100 text-orange-700' : 'hover:bg-slate-100 text-slate-600'
+            activeTab === 'assignment' ? 'bg-orange-100 text-orange-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
           <Briefcase size={18} /> Phân Công
         </button>
 
-        {/* --- TAB MỚI: TIẾN ĐỘ (ẢNH) --- */}
+        {/* Tab 3: Tiến Độ - Ảnh (Mới thêm) */}
         <button
-          onClick={() => setTab('reports')}
+          onClick={() => setActiveTab('reports')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
-            tab === 'reports' ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-slate-100 text-slate-600'
+            activeTab === 'reports' ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
           <LayoutDashboard size={18} /> Tiến Độ (Ảnh)
@@ -948,8 +950,8 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
 
       {/* --- NỘI DUNG TABS --- */}
       <div className="min-h-[500px]">
-        {/* Tab Sắp Lịch */}
-        {tab === 'shifts' && (
+        {/* Tab Sắp Lịch: Giữ nguyên component cũ */}
+        {activeTab === 'shift' && (
           <AdminShiftScheduler
             users={users}
             roles={roles}
@@ -957,22 +959,22 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* Tab Phân Công */}
-        {tab === 'roles' && (
-          <AdminRoleManager
+        {/* Tab Phân Công: Giữ nguyên component cũ trong file của bạn */}
+        {activeTab === 'assignment' && (
+          <ManagerTaskAssignment
+            users={users}
             roles={roles}
-            allTasks={allTasks}
             onRefresh={onRefresh}
             setNotify={setNotify}
           />
         )}
 
-        {/* Tab Tiến Độ (Ảnh): Sử dụng component AdminReports */}
-        {tab === 'reports' && (
+        {/* Tab Tiến Độ (Ảnh): Sử dụng component xem logs của Admin */}
+        {activeTab === 'reports' && (
           <AdminReports
-            users={users}     // Danh sách nhân viên của Manager
-            roles={roles}     // Danh sách vai trò để lọc
-            allTasks={allTasks} // Danh sách công việc để hiển thị cột
+            users={users}      // Truyền danh sách nhân viên của Manager để lọc
+            roles={roles}
+            allTasks={allTasks}
           />
         )}
       </div>
