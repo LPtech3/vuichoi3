@@ -907,27 +907,27 @@ const AdminHistoryLog = ({ users, roles }) => {
 // ==========================================
 // ==========================================
 // ==========================================
-// MANAGER DASHBOARD (4 Tabs: Sắp Lịch - Phân Công - Tiến Độ Ảnh - Giám Sát)
+// MANAGER DASHBOARD (Đã thêm tab Giám Sát - Timesheet)
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-  // Thêm 'monitor' vào danh sách các tab
-  const [activeTab, setActiveTab] = useState('shift'); // 'shift' | 'assignment' | 'reports' | 'monitor'
+  // Thêm 'timesheet' vào state
+  const [activeTab, setActiveTab] = useState('shift'); // 'shift' | 'assignment' | 'reports' | 'timesheet'
 
   return (
     <div className="space-y-6">
       {/* --- THANH ĐIỀU HƯỚNG TABS --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2">
-        {/* Tab 1: Sắp Lịch */}
+        {/* 1. Tab Sắp Lịch (Dùng icon Calendar để không trùng) */}
         <button
           onClick={() => setActiveTab('shift')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
             activeTab === 'shift' ? 'bg-blue-100 text-blue-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
-          <CalendarClock size={18} /> Sắp Lịch Làm
+          <Calendar size={18} /> Sắp Lịch Làm
         </button>
 
-        {/* Tab 2: Phân Công */}
+        {/* 2. Tab Phân Công */}
         <button
           onClick={() => setActiveTab('assignment')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
@@ -937,7 +937,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           <Briefcase size={18} /> Phân Công
         </button>
 
-        {/* Tab 3: Tiến Độ (Ảnh) */}
+        {/* 3. Tab Tiến Độ (Ảnh) */}
         <button
           onClick={() => setActiveTab('reports')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
@@ -947,20 +947,20 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           <LayoutDashboard size={18} /> Tiến Độ (Ảnh)
         </button>
 
-        {/* Tab 4: Giám Sát (MỚI) */}
+        {/* 4. Tab Giám Sát (MỚI - Timesheet) */}
         <button
-          onClick={() => setActiveTab('monitor')}
+          onClick={() => setActiveTab('timesheet')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
-            activeTab === 'monitor' ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-slate-100 text-slate-600'
+            activeTab === 'timesheet' ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
-          <BarChart3 size={18} /> Giám Sát
+          <CalendarClock size={18} /> Giám Sát
         </button>
       </div>
 
       {/* --- NỘI DUNG TABS --- */}
       <div className="min-h-[500px]">
-        {/* 1. Sắp Lịch */}
+        {/* Tab 1: Sắp Lịch */}
         {activeTab === 'shift' && (
           <AdminShiftScheduler
             users={users}
@@ -969,7 +969,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* 2. Phân Công */}
+        {/* Tab 2: Phân Công */}
         {activeTab === 'assignment' && (
           <ManagerTaskAssignment
             users={users}
@@ -979,7 +979,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* 3. Tiến Độ (Ảnh/Logs) */}
+        {/* Tab 3: Tiến Độ (Ảnh) */}
         {activeTab === 'reports' && (
           <AdminReports
             users={users}
@@ -988,12 +988,10 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* 4. Giám Sát (Thống kê/Hiệu suất) */}
-        {activeTab === 'monitor' && (
-          <AdminStatistics
-            users={users}           // Chỉ hiện nhân viên của Manager
-            roles={roles}
-            initialReports={initialReports} // Truyền dữ liệu để tính % hoàn thành
+        {/* Tab 4: Giám Sát (Sử dụng component AdminTimesheet) */}
+        {activeTab === 'timesheet' && (
+          <AdminTimesheet
+            users={users} // Truyền users để lọc hiển thị
           />
         )}
       </div>
