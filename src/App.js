@@ -906,13 +906,12 @@ const AdminHistoryLog = ({ users, roles }) => {
 // MANAGER DASHBOARD (Cập nhật thêm tab Tiến độ)
 // ==========================================
 // ==========================================
-// MANAGER DASHBOARD (ĐÃ SỬA TÊN COMPONENT THỐNG KÊ)
 // ==========================================
-// ==========================================
-// MANAGER DASHBOARD (Đã cập nhật Tab Tiến Độ giống Admin)
+// MANAGER DASHBOARD (Cập nhật Tab Tiến Độ - Ảnh)
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-  const [tab, setTab] = useState('shifts'); // 'shifts' | 'roles' | 'stats'
+  // Tab state: 'shifts' | 'roles' | 'reports'
+  const [tab, setTab] = useState('shifts');
 
   return (
     <div className="space-y-6">
@@ -926,6 +925,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
         >
           <CalendarClock size={18} /> Sắp Lịch Làm
         </button>
+
         <button
           onClick={() => setTab('roles')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
@@ -935,14 +935,14 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           <Briefcase size={18} /> Phân Công
         </button>
 
-        {/* --- TAB TIẾN ĐỘ (Giống Admin) --- */}
+        {/* --- TAB MỚI: TIẾN ĐỘ (ẢNH) --- */}
         <button
-          onClick={() => setTab('stats')}
+          onClick={() => setTab('reports')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
-            tab === 'stats' ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-slate-100 text-slate-600'
+            tab === 'reports' ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
-          <BarChart3 size={18} /> Tiến Độ
+          <LayoutDashboard size={18} /> Tiến Độ (Ảnh)
         </button>
       </div>
 
@@ -967,12 +967,12 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* Tab Tiến Độ: Gọi component AdminStatistics */}
-        {tab === 'stats' && (
-          <AdminStatistics
-            users={users}           // Chỉ hiện nhân viên của Manager
-            roles={roles}
-            initialReports={initialReports} // Cần prop này để tính toán tiến độ
+        {/* Tab Tiến Độ (Ảnh): Sử dụng component AdminReports */}
+        {tab === 'reports' && (
+          <AdminReports
+            users={users}     // Danh sách nhân viên của Manager
+            roles={roles}     // Danh sách vai trò để lọc
+            allTasks={allTasks} // Danh sách công việc để hiển thị cột
           />
         )}
       </div>
