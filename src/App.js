@@ -921,10 +921,15 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
 
   // Lọc users: chỉ hiện user thuộc managed_users HOẶC có role thuộc managed_roles
   const filteredUsers = users.filter(u => {
-    if (managedUserIds.includes(u.id)) return true;
-    const userRoles = u.role.split(',').map(r => r.trim());
-    return userRoles.some(r => managedRoleCodes.includes(r));
-  });
+  // Ưu tiên: Nếu có chọn nhân viên cụ thể
+  if (managedUserIds.length > 0) {
+    return managedUserIds.includes(u.id);
+  }
+
+  // Nếu không chọn nhân viên cụ thể → Lọc theo khu vực
+  const userRoles = u.role.split(',').map(r => r.trim());
+  return userRoles.some(r => managedRoleCodes.includes(r));
+});
 
   // Lọc roles: chỉ hiện roles trong managed_roles
   const filteredRoles = roles.filter(r => managedRoleCodes.includes(r.code));
@@ -1051,15 +1056,16 @@ const ManagerTaskAssignment = ({ users, roles, onRefresh, setNotify, currentUser
     : [];
 
   // Lọc users: chỉ hiện user thuộc managed_users HOẶC có role thuộc managed_roles
-  const filteredUsers = users.filter(u => {
-    // Nếu user nằm trong danh sách managed_users
-    if (managedUserIds.includes(u.id)) return true;
+ const filteredUsers = users.filter(u => {
+  // Ưu tiên: Nếu có chọn nhân viên cụ thể
+  if (managedUserIds.length > 0) {
+    return managedUserIds.includes(u.id);
+  }
 
-    // HOẶC user có ít nhất 1 role trong managed_roles
-    const userRoles = u.role.split(',').map(r => r.trim());
-    return userRoles.some(r => managedRoleCodes.includes(r));
-  });
-
+  // Nếu không chọn nhân viên cụ thể → Lọc theo khu vực
+  const userRoles = u.role.split(',').map(r => r.trim());
+  return userRoles.some(r => managedRoleCodes.includes(r));
+});
   // Lọc roles: chỉ hiện roles trong managed_roles (và loại bỏ admin, manager)
   const filteredRoles = roles.filter(r =>
     managedRoleCodes.includes(r.code) &&
