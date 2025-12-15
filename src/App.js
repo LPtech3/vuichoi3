@@ -902,56 +902,73 @@ const AdminHistoryLog = ({ users, roles }) => {
   );
 };
 // --- MANAGER DASHBOARD (ĐÃ CẬP NHẬT) ---
-// Thêm tab: Phân công nhân sự & Sắp ca làm việc
+// ==========================================
+// MANAGER DASHBOARD (Cập nhật thêm tab Tiến độ)
+// ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-  // State quản lý Tab: 'assignment' (Phân công) hoặc 'shift' (Sắp ca)
-  const [activeTab, setActiveTab] = useState('assignment');
+  // Thêm 'stats' vào danh sách các tab
+  const [tab, setTab] = useState('shifts'); // 'shifts' | 'roles' | 'stats'
 
   return (
     <div className="space-y-6">
-      {/* --- THANH TAB NAVIGATION --- */}
-      <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex">
+      {/* --- THANH ĐIỀU HƯỚNG TABS --- */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2">
         <button
-          onClick={() => setActiveTab('assignment')}
-          className={`flex-1 py-3 px-4 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
-            activeTab === 'assignment'
-              ? 'bg-blue-600 text-white shadow-md'
-              : 'text-slate-500 hover:bg-slate-50'
+          onClick={() => setTab('shifts')}
+          className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            tab === 'shifts' ? 'bg-blue-100 text-blue-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
-          <UserCog size={18} /> Phân Công Nhân Sự
+          <CalendarClock size={18} /> Sắp Lịch Làm
         </button>
         <button
-          onClick={() => setActiveTab('shift')}
-          className={`flex-1 py-3 px-4 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${
-            activeTab === 'shift'
-              ? 'bg-blue-600 text-white shadow-md'
-              : 'text-slate-500 hover:bg-slate-50'
+          onClick={() => setTab('roles')}
+          className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            tab === 'roles' ? 'bg-orange-100 text-orange-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
-          <CalendarClock size={18} /> Sắp Ca Làm Việc
+          <Briefcase size={18} /> Phân Công
+        </button>
+
+        {/* --- TAB MỚI: XEM TIẾN ĐỘ --- */}
+        <button
+          onClick={() => setTab('stats')}
+          className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            tab === 'stats' ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-slate-100 text-slate-600'
+          }`}
+        >
+          <BarChart3 size={18} /> Tiến Độ & Lương
         </button>
       </div>
 
-      {/* --- NỘI DUNG TAB --- */}
-      <div className="transition-all duration-300">
-        {activeTab === 'assignment' ? (
-          // Tab 1: Phân công (Component cũ)
-          <ManagerTaskAssignment
-             users={users}
-             roles={roles}
-             onRefresh={onRefresh}
-             setNotify={setNotify}
+      {/* --- NỘI DUNG TABS --- */}
+      <div className="min-h-[500px]">
+        {/* Tab Sắp Lịch */}
+        {tab === 'shifts' && (
+          <AdminShiftScheduler
+            users={users}
+            roles={roles}
+            setNotify={setNotify}
           />
-        ) : (
-          // Tab 2: Sắp ca (Sử dụng lại component của Admin)
-          // Lưu ý: Đảm bảo tên component bên dưới khớp với tên component sắp ca trong file của bạn (thường là AdminShiftManager)
-          // Tab 2: Sắp ca (Sử dụng lại component của Admin)
-            <AdminShiftScheduler
-                 users={users}
-                 roles={roles}
-                 setNotify={setNotify}
-             />
+        )}
+
+        {/* Tab Phân Công */}
+        {tab === 'roles' && (
+          <AdminRoleManager
+            roles={roles}
+            allTasks={allTasks}
+            onRefresh={onRefresh}
+            setNotify={setNotify}
+          />
+        )}
+
+        {/* Tab Tiến Độ (Sử dụng lại component của Admin) */}
+        {tab === 'stats' && (
+          <AdminStats
+            users={users}        // Danh sách nhân viên (đã lọc bỏ admin ở App.js)
+            roles={roles}
+            initialReports={initialReports} // Dữ liệu báo cáo/checklist
+          />
         )}
       </div>
     </div>
