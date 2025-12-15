@@ -2820,12 +2820,78 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   };
 
   const handleDelete = async (id) => {
-    if(window.confirm("Xóa nhân viên này?")) {
-        await supabase.from('app_users').delete().eq('id', id);
-        onRefresh();
+    if (!window.confirm("Bạn có chắc chắn muốn xóa nhân viên này không?")) return;
+
+    try {
+      const { error } = await supabase.from('app_users').delete().eq('id', id);
+      if (error) throw error;
+
+      showNotify(setNotification, "Đã xóa nhân viên", "success");
+      // Nếu đang sửa đúng user này thì reset form
+      if (editingUser && editingUser.id === id) {
+          setEditingUser(null);
+          setFormData({ username: '', password: '', name: '', role: '', managed_roles: '', managed_users: '' });
+      }
+      await fetchAllDataManager();
+    } catch (error) {
+      showNotify(setNotification, "Lỗi xóa: " + error.message, "error");
     }
   };
+// --- HÀM XỬ LÝ LƯU (THÊM MỚI / CẬP NHẬT) ---
+  const handleSave = async () => {
+    // 1. Kiểm tra dữ liệu đầu vào
+    if (!formData.username || !formData.password || !formData.name) {
+      showNotify(setNotification, "Vui lòng nhập Tên, Tài khoản và Mật khẩu!", "error");
+      return;
+    }
 
+    // 2. Chuẩn bị dữ liệu để gửi lên Supabase
+    const userData = {
+      username: formData.username,
+      password: formData.password,
+      name: formData.name,
+      role: formData.role || '', // Nếu không chọn role thì để rỗng
+
+      // Quan trọng: Lưu thông tin phân quyền quản lý
+      managed_roles: formData.managed_roles || '',
+      managed_users: formData.managed_users || '',
+    };
+
+    try {
+      let error;
+
+      if (editingUser) {
+        // --- TRƯỜNG HỢP SỬA (UPDATE) ---
+        // Cập nhật user có id tương ứng
+        const { error: updateError } = await supabase
+          .from('app_users')
+          .update(userData)
+          .eq('id', editingUser.id);
+        error = updateError;
+      } else {
+        // --- TRƯỜNG HỢP THÊM MỚI (INSERT) ---
+        const { error: insertError } = await supabase
+          .from('app_users')
+          .insert([userData]);
+        error = insertError;
+      }
+
+      if (error) throw error;
+
+      // 3. Thông báo thành công & Reset form
+      showNotify(setNotification, editingUser ? "Đã cập nhật nhân viên!" : "Đã thêm nhân viên mới!", "success");
+
+      setEditingUser(null);
+      setFormData({ username: '', password: '', name: '', role: '', managed_roles: '', managed_users: '' });
+
+      // 4. Tải lại dữ liệu danh sách
+      await fetchAllDataManager();
+
+    } catch (error) {
+      console.error("Lỗi lưu user:", error);
+      showNotify(setNotification, "Có lỗi xảy ra: " + (error.message || error), "error");
+    }
+  };
   return (
     <div className="space-y-8">
       {/* --- FORM NHẬP LIỆU --- */}
