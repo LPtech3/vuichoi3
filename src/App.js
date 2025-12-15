@@ -906,11 +906,59 @@ const AdminHistoryLog = ({ users, roles }) => {
 // ==========================================
 // MANAGER DASHBOARD (Cập nhật thêm tab Tiến độ)
 // ==========================================
+// --- MANAGER DASHBOARD (ĐÃ Cập nhật thêm tab Tiến độ)
+// ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify, currentUser }) => {
   const [activeTab, setActiveTab] = useState('shift');
 
+  // ===== FILTER LOGIC DÙNG CHUNG CHO TẤT CẢ TAB =====
+  const managedUserIds = currentUser?.managed_users
+    ? currentUser.managed_users.split(',').map(id => id.trim()).filter(id => id)
+    : [];
+  const managedRoleCodes = currentUser?.managed_roles
+    ? currentUser.managed_roles.split(',').map(r => r.trim()).filter(r => r)
+    : [];
+
+  // Lọc users: chỉ hiện user thuộc managed_users HOẶC có role thuộc managed_roles
+  const filteredUsers = users.filter(u => {
+    if (managedUserIds.includes(u.id)) return true;
+    const userRoles = u.role.split(',').map(r => r.trim());
+    return userRoles.some(r => managedRoleCodes.includes(r));
+  });
+
+  // Lọc roles: chỉ hiện roles trong managed_roles
+  const filteredRoles = roles.filter(r => managedRoleCodes.includes(r.code));
+
+  // Lọc tasks: chỉ hiện task thuộc managed_roles
+  const filteredTasks = allTasks.filter(t => managedRoleCodes.includes(t.role));
+
   return (
     <div className="space-y-6">
+      {/* --- BANNER THÔNG TIN QUYỀN (CHỈ HIỆN CHO MANAGER) --- */}
+      {filteredRoles.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+              <ShieldCheck size={24} />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-bold text-blue-900 mb-1">Quyền Quản Lý Của Bạn</h3>
+              <div className="flex flex-wrap gap-3 text-sm text-blue-700">
+                <div className="flex items-center gap-1">
+                  <Briefcase size={14}/>
+                  <span><strong>{filteredRoles.length}</strong> Khu vực: {filteredRoles.map(r => r.name).join(', ')}</span>
+                </div>
+                <div className="h-4 w-px bg-blue-300"></div>
+                <div className="flex items-center gap-1">
+                  <Users size={14}/>
+                  <span><strong>{filteredUsers.length}</strong> Nhân viên</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- THANH ĐIỀU HƯỚNG TABS --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2">
         <button
@@ -950,12 +998,12 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
         </button>
       </div>
 
-      {/* --- NỘI DUNG TABS --- */}
+      {/* --- Nội dung TABS (TRUYỀN DỮ LIỆU ĐÃ LỌC) --- */}
       <div className="min-h-[500px]">
         {activeTab === 'shift' && (
           <AdminShiftScheduler
-            users={users}
-            roles={roles}
+            users={filteredUsers}
+            roles={filteredRoles}
             setNotify={setNotify}
             currentUser={currentUser}
           />
@@ -963,25 +1011,25 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
 
         {activeTab === 'assignment' && (
           <ManagerTaskAssignment
-            users={users}
-            roles={roles}
+            users={filteredUsers}
+            roles={filteredRoles}
             onRefresh={onRefresh}
             setNotify={setNotify}
-            currentUser={currentUser}  // ← THÊM PROP NÀY
+            currentUser={currentUser}
           />
         )}
 
         {activeTab === 'reports' && (
           <AdminReports
-            users={users}
-            roles={roles}
-            allTasks={allTasks}
+            users={filteredUsers}
+            roles={filteredRoles}
+            allTasks={filteredTasks}
           />
         )}
 
         {activeTab === 'timesheet' && (
           <AdminTimesheet
-            users={users}
+            users={filteredUsers}
           />
         )}
       </div>
