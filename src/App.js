@@ -908,6 +908,9 @@ const AdminHistoryLog = ({ users, roles }) => {
 // ==========================================
 // MANAGER DASHBOARD (ĐÃ SỬA TÊN COMPONENT THỐNG KÊ)
 // ==========================================
+// ==========================================
+// MANAGER DASHBOARD (Đã sửa tên Tab và Component)
+// ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
   // Thêm 'stats' vào danh sách các tab
   const [tab, setTab] = useState('shifts'); // 'shifts' | 'roles' | 'stats'
@@ -933,14 +936,14 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           <Briefcase size={18} /> Phân Công
         </button>
 
-        {/* --- TAB MỚI: XEM TIẾN ĐỘ --- */}
+        {/* --- TAB MỚI: THỐNG KÊ / TIẾN ĐỘ --- */}
         <button
           onClick={() => setTab('stats')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
             tab === 'stats' ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-slate-100 text-slate-600'
           }`}
         >
-          <BarChart3 size={18} /> Tiến Độ & Lương
+          <BarChart3 size={18} /> Xem Tiến Độ
         </button>
       </div>
 
@@ -965,10 +968,10 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* Tab Tiến Độ (Sửa AdminStats -> AdminStatistics) */}
+        {/* Tab Thống Kê (Dùng AdminStatistics để xem tiến độ) */}
         {tab === 'stats' && (
           <AdminStatistics
-            users={users} // Component này sẽ dùng danh sách users (đã lọc theo Manager) để hiển thị
+            users={users} // Truyền danh sách nhân viên của quản lý
             roles={roles}
           />
         )}
