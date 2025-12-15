@@ -1276,10 +1276,23 @@ const AdminShiftScheduler = ({ users, roles }) => {
   };
 
   // Hàm xóa ca
-  const handleDeleteShift = async (id) => {
-    if(!window.confirm("Xóa ca làm việc này?")) return;
-    await supabase.from('work_shifts').delete().eq('id', id);
-    fetchShifts();
+  const handleDelete = async (id) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa nhân viên này không?")) return;
+
+    try {
+      const { error } = await supabase.from('app_users').delete().eq('id', id);
+      if (error) throw error;
+
+      setNotify("Đã xóa nhân viên", "success"); // Sửa
+
+      if (editingUser && editingUser.id === id) {
+          setEditingUser(null);
+          setFormData({ username: '', password: '', name: '', role: '', managed_roles: '', managed_users: '' });
+      }
+      await onRefresh(); // Sửa
+    } catch (error) {
+      setNotify("Lỗi xóa: " + error.message, "error");
+    }
   };
 
   return (
@@ -2768,108 +2781,48 @@ const AdminRoleManager = ({ roles, onRefresh, setNotify }) => {
 };
 
 // --- ADMIN USER MANAGER (FULL ACCESS) ---
+// --- COMPONENT QUẢN LÝ NHÂN VIÊN (ĐÃ SỬA HOÀN CHỈNH) ---
 const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
   const [editingUser, setEditingUser] = useState(null);
-  const [formData, setFormData] = useState({ username: '', password: '', name: '', role: [] });
-  const [showPass, setShowPass] = useState(false);
+  const [formData, setFormData] = useState({
+    username: '',
+    password: '',
+    name: '',
+    role: '',
+    managed_roles: '', // Lưu danh sách khu vực quản lý
+    managed_users: ''  // Lưu danh sách nhân viên quản lý
+  });
 
-  useEffect(() => {
-     if(editingUser) {
-        // Chuyển role string "a,b" thành array ["a","b"]
-        const roleArray = editingUser.role.split(',').map(r => r.trim());
-        setFormData({
-            username: editingUser.username,
-            password: editingUser.password,
-            name: editingUser.name,
-            role: roleArray
-        });
-     } else {
-        setFormData({ username: '', password: '', name: '', role: [] });
-     }
-  }, [editingUser]);
-
-  const handleRoleChange = (roleCode) => {
-      setFormData(prev => {
-          if (prev.role.includes(roleCode)) {
-              return { ...prev, role: prev.role.filter(r => r !== roleCode) };
-          } else {
-              return { ...prev, role: [...prev.role, roleCode] };
-          }
-      });
-  };
-
-  const handleSubmit = async () => {
-    if(!formData.username || !formData.password || !formData.name) return setNotify("Thiếu thông tin!", "error");
-    if(formData.role.length === 0) return setNotify("Chọn ít nhất 1 role", "error");
-
-    const roleString = formData.role.join(',');
-
-    if (editingUser) {
-        const { error } = await supabase.from('app_users').update({
-            password: formData.password,
-            name: formData.name,
-            role: roleString
-        }).eq('id', editingUser.id);
-        if(error) setNotify("Lỗi cập nhật: " + error.message, "error");
-        else { setNotify("Đã cập nhật nhân viên"); setEditingUser(null); onRefresh(); }
-    } else {
-        const { error } = await supabase.from('app_users').insert({...formData, role: roleString});
-        if(error) setNotify("Lỗi thêm: " + error.message, "error");
-        else { setNotify("Đã thêm nhân viên"); onRefresh(); }
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm("Bạn có chắc chắn muốn xóa nhân viên này không?")) return;
-
-    try {
-      const { error } = await supabase.from('app_users').delete().eq('id', id);
-      if (error) throw error;
-
-      showNotify(setNotification, "Đã xóa nhân viên", "success");
-      // Nếu đang sửa đúng user này thì reset form
-      if (editingUser && editingUser.id === id) {
-          setEditingUser(null);
-          setFormData({ username: '', password: '', name: '', role: '', managed_roles: '', managed_users: '' });
-      }
-      await fetchAllDataManager();
-    } catch (error) {
-      showNotify(setNotification, "Lỗi xóa: " + error.message, "error");
-    }
-  };
-// --- HÀM XỬ LÝ LƯU (THÊM MỚI / CẬP NHẬT) ---
+  // --- HÀM XỬ LÝ LƯU (THÊM / SỬA) ---
   const handleSave = async () => {
-    // 1. Kiểm tra dữ liệu đầu vào
+    // 1. Kiểm tra dữ liệu
     if (!formData.username || !formData.password || !formData.name) {
-      showNotify(setNotification, "Vui lòng nhập Tên, Tài khoản và Mật khẩu!", "error");
+      setNotify("Vui lòng nhập đầy đủ: Tên, Tài khoản và Mật khẩu!", "error");
       return;
     }
 
-    // 2. Chuẩn bị dữ liệu để gửi lên Supabase
+    // 2. Chuẩn bị dữ liệu
     const userData = {
       username: formData.username,
       password: formData.password,
       name: formData.name,
-      role: formData.role || '', // Nếu không chọn role thì để rỗng
-
-      // Quan trọng: Lưu thông tin phân quyền quản lý
+      role: formData.role || '',
+      // Lưu thông tin phân quyền
       managed_roles: formData.managed_roles || '',
       managed_users: formData.managed_users || '',
     };
 
     try {
       let error;
-
       if (editingUser) {
-        // --- TRƯỜNG HỢP SỬA (UPDATE) ---
-        // Cập nhật user có id tương ứng
+        // Update
         const { error: updateError } = await supabase
           .from('app_users')
           .update(userData)
           .eq('id', editingUser.id);
         error = updateError;
       } else {
-        // --- TRƯỜNG HỢP THÊM MỚI (INSERT) ---
+        // Insert
         const { error: insertError } = await supabase
           .from('app_users')
           .insert([userData]);
@@ -2878,20 +2831,41 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
 
       if (error) throw error;
 
-      // 3. Thông báo thành công & Reset form
-      showNotify(setNotification, editingUser ? "Đã cập nhật nhân viên!" : "Đã thêm nhân viên mới!", "success");
+      setNotify(editingUser ? "Cập nhật thành công!" : "Thêm mới thành công!", "success");
 
+      // Reset form
       setEditingUser(null);
       setFormData({ username: '', password: '', name: '', role: '', managed_roles: '', managed_users: '' });
 
-      // 4. Tải lại dữ liệu danh sách
-      await fetchAllDataManager();
+      // Tải lại dữ liệu
+      await onRefresh();
 
     } catch (error) {
-      console.error("Lỗi lưu user:", error);
-      showNotify(setNotification, "Có lỗi xảy ra: " + (error.message || error), "error");
+      console.error(error);
+      setNotify("Lỗi: " + error.message, "error");
     }
   };
+
+  // --- HÀM XỬ LÝ XÓA ---
+  const handleDelete = async (id) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa nhân viên này?")) return;
+
+    try {
+      const { error } = await supabase.from('app_users').delete().eq('id', id);
+      if (error) throw error;
+
+      setNotify("Đã xóa nhân viên", "success");
+
+      if (editingUser && editingUser.id === id) {
+          setEditingUser(null);
+          setFormData({ username: '', password: '', name: '', role: '', managed_roles: '', managed_users: '' });
+      }
+      await onRefresh();
+    } catch (error) {
+      setNotify("Lỗi xóa: " + error.message, "error");
+    }
+  };
+
   return (
     <div className="space-y-8">
       {/* --- FORM NHẬP LIỆU --- */}
