@@ -907,17 +907,17 @@ const AdminHistoryLog = ({ users, roles }) => {
 // ==========================================
 // ==========================================
 // ==========================================
-// MANAGER DASHBOARD (Đã thêm tab Tiến Độ Thô/Ảnh)
+// MANAGER DASHBOARD (4 Tabs: Sắp Lịch - Phân Công - Tiến Độ Ảnh - Giám Sát)
 // ==========================================
 const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, setNotify }) => {
-  // Giữ nguyên logic state cũ, thêm 'reports'
-  const [activeTab, setActiveTab] = useState('shift'); // 'shift' | 'assignment' | 'reports'
+  // Thêm 'monitor' vào danh sách các tab
+  const [activeTab, setActiveTab] = useState('shift'); // 'shift' | 'assignment' | 'reports' | 'monitor'
 
   return (
     <div className="space-y-6">
       {/* --- THANH ĐIỀU HƯỚNG TABS --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-2">
-        {/* Tab 1: Sắp Lịch (Giữ nguyên) */}
+        {/* Tab 1: Sắp Lịch */}
         <button
           onClick={() => setActiveTab('shift')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
@@ -927,7 +927,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           <CalendarClock size={18} /> Sắp Lịch Làm
         </button>
 
-        {/* Tab 2: Phân Công (Giữ nguyên) */}
+        {/* Tab 2: Phân Công */}
         <button
           onClick={() => setActiveTab('assignment')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
@@ -937,7 +937,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           <Briefcase size={18} /> Phân Công
         </button>
 
-        {/* Tab 3: Tiến Độ - Ảnh (Mới thêm) */}
+        {/* Tab 3: Tiến Độ (Ảnh) */}
         <button
           onClick={() => setActiveTab('reports')}
           className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
@@ -946,11 +946,21 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
         >
           <LayoutDashboard size={18} /> Tiến Độ (Ảnh)
         </button>
+
+        {/* Tab 4: Giám Sát (MỚI) */}
+        <button
+          onClick={() => setActiveTab('monitor')}
+          className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            activeTab === 'monitor' ? 'bg-indigo-100 text-indigo-700' : 'hover:bg-slate-100 text-slate-600'
+          }`}
+        >
+          <BarChart3 size={18} /> Giám Sát
+        </button>
       </div>
 
       {/* --- NỘI DUNG TABS --- */}
       <div className="min-h-[500px]">
-        {/* Tab Sắp Lịch: Giữ nguyên component cũ */}
+        {/* 1. Sắp Lịch */}
         {activeTab === 'shift' && (
           <AdminShiftScheduler
             users={users}
@@ -959,7 +969,7 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* Tab Phân Công: Giữ nguyên component cũ trong file của bạn */}
+        {/* 2. Phân Công */}
         {activeTab === 'assignment' && (
           <ManagerTaskAssignment
             users={users}
@@ -969,12 +979,21 @@ const ManagerDashboard = ({ users, roles, allTasks, initialReports, onRefresh, s
           />
         )}
 
-        {/* Tab Tiến Độ (Ảnh): Sử dụng component xem logs của Admin */}
+        {/* 3. Tiến Độ (Ảnh/Logs) */}
         {activeTab === 'reports' && (
           <AdminReports
-            users={users}      // Truyền danh sách nhân viên của Manager để lọc
+            users={users}
             roles={roles}
             allTasks={allTasks}
+          />
+        )}
+
+        {/* 4. Giám Sát (Thống kê/Hiệu suất) */}
+        {activeTab === 'monitor' && (
+          <AdminStatistics
+            users={users}           // Chỉ hiện nhân viên của Manager
+            roles={roles}
+            initialReports={initialReports} // Truyền dữ liệu để tính % hoàn thành
           />
         )}
       </div>
