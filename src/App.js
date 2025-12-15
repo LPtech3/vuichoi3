@@ -280,16 +280,46 @@ export default function App() {
   const fetchAllDataManager = async () => {
      try {
         const today = getTodayISO();
-        const { data: uData } = await supabase.from('app_users').select('*').neq('role', 'admin').order('name');
+
+        // --- [CODE MỚI] LẤY DANH SÁCH ĐƯỢC PHÂN QUYỀN ---
+        // Chuyển chuỗi "id1,id2" thành mảng ['id1', 'id2']
+        const allowedUsers = user.managed_users ? user.managed_users.split(',').filter(x => x) : [];
+        const allowedRoles = user.managed_roles ? user.managed_roles.split(',').filter(x => x) : [];
+
+        // 1. Lọc User: Chỉ lấy user nằm trong danh sách được quản lý
+        let userQuery = supabase.from('app_users').select('*').neq('role', 'admin');
+        if (allowedUsers.length > 0) {
+            userQuery = userQuery.in('id', allowedUsers);
+        } else if (user.managed_users === '') {
+             // Nếu chuỗi rỗng (không được gán ai) -> Không trả về user nào (hoặc bỏ dòng này nếu muốn mặc định xem hết)
+             // Ở đây tôi để logic: Không gán = Không thấy ai
+             userQuery = userQuery.eq('id', 'dummy-id-to-return-empty');
+        }
+        const { data: uData } = await userQuery.order('name');
         setUsersList(uData || []);
-        const { data: rData } = await supabase.from('job_roles').select('*').order('created_at');
+
+        // 2. Lọc Roles (Khu vực): Chỉ lấy khu vực được phân công
+        let roleQuery = supabase.from('job_roles').select('*');
+        if (allowedRoles.length > 0) {
+             roleQuery = roleQuery.in('code', allowedRoles);
+        }
+        const { data: rData } = await roleQuery.order('created_at');
         setRolesList(rData || []);
-        const { data: tData } = await supabase.from('task_definitions').select('*').order('time_label', { ascending: true });
+
+        // 3. Lọc Tasks: Chỉ hiện task thuộc khu vực được phân công
+        let taskQuery = supabase.from('task_definitions').select('*');
+        if (allowedRoles.length > 0) {
+            taskQuery = taskQuery.in('role', allowedRoles);
+        }
+        const { data: tData } = await taskQuery.order('time_label', { ascending: true });
         setTasksConfig(tData || []);
+
+        // ... (Phần lấy checklist_logs giữ nguyên)
         const { data: repData } = await supabase.from('checklist_logs').select('role, data').eq('report_date', today);
         const reportMap = {};
         if(repData) repData.forEach(r => reportMap[r.role] = r.data);
         setChecklistData(reportMap);
+
      } catch (error) {
         showNotify(setNotification, "Lỗi tải dữ liệu quản lý", "error");
      }
@@ -2822,6 +2852,66 @@ const AdminUserManager = ({ users, roles, onRefresh, setNotify }) => {
                              <input type="checkbox" checked={formData.role.includes(r.code)} onChange={() => handleRoleChange(r.code)}/> {r.name}
                          </label>
                      ))}
+                     {/* --- [CODE MỚI] PHÂN QUYỀN CHO MANAGER --- */}
+          {/* Chỉ hiện khi user đang sửa có role là manager */}
+          {formData.role.includes('manager') && (
+            <div className="mt-4 p-4 bg-orange-50 rounded-xl border border-orange-200 animate-in fade-in">
+                <h4 className="font-bold text-orange-800 mb-3 text-sm flex items-center gap-2">
+                   <ShieldCheck size={16}/> PHÂN QUYỀN QUẢN LÝ
+                </h4>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                    {/* 1. Chọn KHU VỰC quản lý */}
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-2">Quản lý khu vực (Area)</label>
+                        <div className="flex flex-col gap-2 max-h-40 overflow-y-auto border border-orange-100 bg-white p-2 rounded-lg">
+                            {roles.map(r => (
+                                <label key={`mng_role_${r.code}`} className="flex items-center gap-2 text-sm cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="text-orange-600 focus:ring-orange-500 rounded"
+                                        checked={formData.managed_roles ? formData.managed_roles.split(',').includes(r.code) : false}
+                                        onChange={() => {
+                                            const current = formData.managed_roles ? formData.managed_roles.split(',').filter(x=>x) : [];
+                                            const updated = current.includes(r.code)
+                                                ? current.filter(c => c !== r.code) // Bỏ chọn
+                                                : [...current, r.code];             // Chọn thêm
+                                            setFormData({...formData, managed_roles: updated.join(',')});
+                                        }}
+                                    />
+                                    <span>{r.name}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* 2. Chọn NHÂN VIÊN quản lý */}
+                    <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-2">Quản lý nhân viên (Staff)</label>
+                        <div className="flex flex-col gap-2 max-h-40 overflow-y-auto border border-orange-100 bg-white p-2 rounded-lg">
+                            {users.filter(u => u.role !== 'admin' && u.id !== formData.id).map(u => (
+                                <label key={`mng_user_${u.id}`} className="flex items-center gap-2 text-sm cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="text-orange-600 focus:ring-orange-500 rounded"
+                                        checked={formData.managed_users ? formData.managed_users.split(',').includes(u.id) : false}
+                                        onChange={() => {
+                                            const current = formData.managed_users ? formData.managed_users.split(',').filter(x=>x) : [];
+                                            const updated = current.includes(u.id)
+                                                ? current.filter(c => c !== u.id)
+                                                : [...current, u.id];
+                                            setFormData({...formData, managed_users: updated.join(',')});
+                                        }}
+                                    />
+                                    <span>{u.name}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+          )}
+          {/* --- HẾT CODE MỚI --- */}
                  </div>
              </div>
          </div>
